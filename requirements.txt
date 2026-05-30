@@ -1,0 +1,7 @@
+anthropic
+python-telegram-bot>=20.0
+apscheduler
+requests
+beautifulsoup4
+pyyaml
+lxml
