@@ -77,7 +77,7 @@ async def _parse_channels() -> list:
     max_price = RUNTIME_CONFIG.get("MAX_PRICE", 140000)
 
     if not api_id or not api_hash:
-        logging.debug("Telegram API не настроен, пропускаем")
+        logging.warning("TG: TG_API_ID/TG_API_HASH не заполнены в config.yaml — парсер отключён")
         return []
 
     results = []
@@ -132,7 +132,7 @@ def parse() -> list:
     """Синхронная точка входа. Запускает async парсинг в отдельном потоке с собственным event loop."""
     load_config()
     if not RUNTIME_CONFIG.get("TG_API_ID") or not RUNTIME_CONFIG.get("TG_API_HASH"):
-        logging.info("Telegram: TG_API_ID/TG_API_HASH не настроены — пропускаем")
+        logging.warning("TG: TG_API_ID/TG_API_HASH не заполнены в config.yaml — парсер отключён")
         return []
 
     result = []

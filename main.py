@@ -200,15 +200,29 @@ def main():
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
+    from config import RUNTIME_CONFIG, load_config
+    _cfg = load_config()
+    _token = _cfg.get("TELEGRAM_BOT_TOKEN", "")
+
+    class _TokenFilter(logging.Filter):
+        def filter(self, record):
+            if _token:
+                record.msg = str(record.msg).replace(_token, "***TOKEN***")
+                record.args = ()
+            return True
+
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    token_filter = _TokenFilter()
 
     file_handler = logging.FileHandler("agent.log", encoding="utf-8")
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(fmt)
+    file_handler.addFilter(token_filter)
 
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(fmt)
+    console_handler.addFilter(token_filter)
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)

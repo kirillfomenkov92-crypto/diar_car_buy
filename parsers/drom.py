@@ -15,12 +15,12 @@ from utils.headers import get_drom_headers
 SOURCE = "drom"
 
 DROM_URLS = [
-    "https://auto.drom.ru/moskva/all/price-{max_price}/",
-    "https://auto.drom.ru/tula/all/price-130000/",
-    "https://auto.drom.ru/ryazan/all/price-130000/",
-    "https://auto.drom.ru/kaluga/all/price-130000/",
-    "https://auto.drom.ru/vladimir/all/price-130000/",
-    "https://auto.drom.ru/tver/all/price-130000/",
+    "https://auto.drom.ru/moscow/all/?priceto={max_price}",
+    "https://auto.drom.ru/tula/all/?priceto=130000",
+    "https://auto.drom.ru/ryazan/all/?priceto=130000",
+    "https://auto.drom.ru/kaluga/all/?priceto=130000",
+    "https://auto.drom.ru/vladimir/all/?priceto=130000",
+    "https://auto.drom.ru/tver/all/?priceto=130000",
 ]
 
 
@@ -47,7 +47,7 @@ def parse() -> list:
         time.sleep(random.uniform(2, 5))
 
         try:
-            response = session.get(url, headers=get_drom_headers(), timeout=20)
+            response = session.get(url, headers=get_drom_headers(), timeout=25)
         except Exception as e:
             logging.error(f"Drom {city}: {e}")
             continue
@@ -56,17 +56,16 @@ def parse() -> list:
             logging.warning(f"Drom {city}: статус {response.status_code}")
             continue
 
-        soup = BeautifulSoup(response.text, "lxml")
-        items = (
-            soup.select("div[data-ftid='bulls-list_bull']")
-            or soup.select("article.bull-item")
-            or soup.select("div[class*='bull-item']")
+        soup = BeautifulSoup(response.text, "html.parser")
+        # Карточки — ссылки на конкретные объявления с числовым ID
+        items = soup.find_all(
+            "a", href=re.compile(r"auto\.drom\.ru/[a-z]+/[a-z0-9_]+/[a-z0-9_]+/\d+\.html")
         )
         logging.info(f"Drom {city}: найдено {len(items)} карточек")
 
-        for item in items[:20]:
+        for item in items[:25]:
             try:
-                listing = _parse_item(item, city, is_regional)
+                listing = _parse_link_item(item, city, is_regional)
                 if listing is None:
                     continue
                 if listing["price"] <= 0:
@@ -83,6 +82,56 @@ def parse() -> list:
 
     logging.info(f"Drom итого: {len(results)} новых объявлений")
     return results
+
+
+def _parse_link_item(link_el, city: str, is_regional: bool) -> dict | None:
+    """Разобрать объявление Drom из элемента <a href=...>text</a>."""
+    try:
+        href = link_el.get("href", "")
+        id_match = re.search(r"(\d{6,})\.html", href)
+        listing_id = id_match.group(1) if id_match else None
+        if not listing_id:
+            return None
+
+        text = link_el.get_text(separator=" ", strip=True)
+        # Формат текста: "1 500 000 ₽Лада Веста, 2024Москва"
+        price_m = re.search(r"([\d\s\xa0]+)\s*[₽р]", text)
+        price = int(re.sub(r"\D", "", price_m.group(1))) if price_m else 0
+
+        year_m = re.search(r"\b(199\d|200\d|201\d|202[0-6])\b", text)
+        year = int(year_m.group(1)) if year_m else 0
+
+        km_m = re.search(r"([\d\s\xa0]+)\s*км", text)
+        mileage = int(re.sub(r"\D", "", km_m.group(1))) if km_m else 0
+
+        # Название: часть между ценой и годом
+        title = re.sub(r"[\d\s₽р.,]*$", "", re.sub(r"^[\d\s₽р.,]*", "", text)).strip()[:80]
+        if not title:
+            # берём марку/модель из URL
+            parts = href.rstrip("/").split("/")
+            if len(parts) >= 5:
+                title = f"{parts[-3].title()} {parts[-2].title()}, {year}".strip()
+
+        return {
+            "listing_id":       listing_id,
+            "source":           SOURCE,
+            "title":            title,
+            "price":            price,
+            "year":             year,
+            "mileage":          mileage,
+            "city":             city,
+            "description":      text[:600],
+            "photo_count":      0,
+            "photo_urls":       [],
+            "seller_ads_count": 0,
+            "seller_id":        "",
+            "published_at":     "",
+            "listing_url":      href,
+            "is_regional":      is_regional,
+        }
+    except Exception as e:
+        logging.debug(f"parse_drom_link_item: {e}")
+        return None
 
 
 def _parse_item(item, city: str, is_regional: bool) -> dict | None:
@@ -147,10 +196,10 @@ def _parse_item(item, city: str, is_regional: bool) -> dict | None:
 
 
 _CITY_NAMES = {
-    "moskva": "Москва",
-    "tula":   "Тула",
-    "ryazan": "Рязань",
-    "kaluga": "Калуга",
+    "moscow":   "Москва",
+    "tula":     "Тула",
+    "ryazan":   "Рязань",
+    "kaluga":   "Калуга",
     "vladimir": "Владимир",
-    "tver":   "Тверь",
+    "tver":     "Тверь",
 }

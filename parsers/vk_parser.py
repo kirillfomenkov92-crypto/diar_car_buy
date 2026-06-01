@@ -77,7 +77,7 @@ def parse_vk_groups() -> list:
     load_config()
     token = RUNTIME_CONFIG.get("VK_ACCESS_TOKEN", "")
     if not token:
-        logging.debug("VK: токен не настроен, пропускаем")
+        logging.warning("VK: VK_ACCESS_TOKEN не заполнен в config.yaml — парсер отключён")
         return []
 
     groups = RUNTIME_CONFIG.get("VK_GROUPS", [])

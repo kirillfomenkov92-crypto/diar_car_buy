@@ -7,7 +7,6 @@ import random
 import logging
 
 import requests as _requests
-from bs4 import BeautifulSoup
 
 from config import load_config, RUNTIME_CONFIG
 from database import is_seen
@@ -16,8 +15,30 @@ from utils.headers import get_random_headers
 SOURCE = "autoru"
 
 
+def _load_autoru_cookies(session) -> int:
+    """Загружает куки auto.ru напрямую из Firefox (fallback: Chrome)."""
+    try:
+        import browser_cookie3
+        for loader in [browser_cookie3.firefox, browser_cookie3.chrome]:
+            try:
+                cj = loader(domain_name=".auto.ru")
+                count = 0
+                for c in cj:
+                    if "auto.ru" in c.domain:
+                        session.cookies.set(c.name, c.value, domain=".auto.ru")
+                        count += 1
+                if count:
+                    logging.info(f"Auto.ru: {count} куки из браузера")
+                    return count
+            except Exception:
+                continue
+    except Exception as e:
+        logging.warning(f"Auto.ru: не удалось загрузить куки: {e}")
+    return 0
+
+
 def parse() -> list:
-    """Парсит Auto.ru через curl_cffi с TLS fingerprint Chrome 124."""
+    """Парсит Auto.ru через curl_cffi с живыми куками из Firefox."""
     load_config()
     try:
         from curl_cffi.requests import Session as CurlSession
@@ -25,13 +46,9 @@ def parse() -> list:
         logging.error("Auto.ru: curl_cffi не установлен — pip install curl_cffi")
         return []
 
-    cookies = RUNTIME_CONFIG.get("AUTORU_COOKIES", {}) or {}
     max_price = RUNTIME_CONFIG.get("MAX_PRICE", 150000)
-
     session = CurlSession(impersonate="chrome124")
-    for name, value in cookies.items():
-        if value:
-            session.cookies.set(name, str(value), domain=".auto.ru")
+    _load_autoru_cookies(session)
 
     headers = get_random_headers(referer="https://auto.ru/")
     url = f"https://auto.ru/moskva/cars/used/?price_to={max_price}&seller_group=PRIVATE"
@@ -39,7 +56,7 @@ def parse() -> list:
     time.sleep(random.uniform(3, 7))
 
     try:
-        response = session.get(url, headers=headers, timeout=20)
+        response = session.get(url, headers=headers, timeout=60)
     except Exception as e:
         logging.error(f"Auto.ru запрос: {e}")
         return []
@@ -64,29 +81,9 @@ def parse() -> list:
 
     RUNTIME_CONFIG["AUTORU_EMPTY_CYCLES"] = 0
 
-    soup = BeautifulSoup(response.text, "lxml")
-    items = (
-        soup.select("div.ListingItem")
-        or soup.select("article[class*='listing-item']")
-        or soup.select("div[class*='ListingItem']")
-    )
-    logging.info(f"Auto.ru: найдено {len(items)} карточек")
+    results = _parse_from_json(response.text, max_price)
+    logging.info(f"Auto.ru: {len(results)} новых объявлений")
 
-    results = []
-    for item in items[:25]:
-        try:
-            listing = _parse_item(item)
-            if listing is None:
-                continue
-            if listing["price"] <= 0 or listing["price"] > max_price:
-                continue
-            if is_seen(listing["listing_id"], SOURCE):
-                continue
-            results.append(listing)
-        except Exception as e:
-            logging.debug(f"Auto.ru item: {e}")
-
-    # Счётчик пустых циклов при пустом ответе с кодом 200
     if not results:
         cnt = RUNTIME_CONFIG.get("AUTORU_EMPTY_CYCLES", 0) + 1
         RUNTIME_CONFIG["AUTORU_EMPTY_CYCLES"] = cnt
@@ -96,68 +93,68 @@ def parse() -> list:
     else:
         RUNTIME_CONFIG["AUTORU_EMPTY_CYCLES"] = 0
 
-    logging.info(f"Auto.ru: {len(results)} новых объявлений")
     return results
 
 
-def _parse_item(item) -> dict | None:
-    """Разобрать карточку объявления Auto.ru из BeautifulSoup."""
-    try:
-        link = (
-            item.select_one("a[href*='auto.ru']")
-            or item.select_one("a[class*='link']")
-        )
-        if not link:
-            return None
+def _parse_from_json(html: str, max_price: int) -> list:
+    """Извлекает объявления из embedded JSON в HTML страницы Auto.ru."""
+    sale_ids = [(m.group(1), m.start()) for m in re.finditer(r'"saleId":"([\d]+-[a-f\d]+)"', html)]
+    logging.info(f"Auto.ru: найдено {len(sale_ids)} saleId в JSON")
 
-        href = link.get("href", "")
-        id_match = re.search(r"/(\d+)-", href) or re.search(r"(\d{8,})", href)
-        listing_id = id_match.group(1) if id_match else None
-        if not listing_id:
-            return None
+    results = []
+    seen_ids = set()
+    for sid, pos in sale_ids:
+        try:
+            if sid in seen_ids:
+                continue
+            seen_ids.add(sid)
 
-        title_el = item.select_one("[class*='name']") or item.select_one("[class*='title']")
-        title = title_el.get_text(strip=True)[:100] if title_el else ""
+            if is_seen(sid, SOURCE):
+                continue
 
-        price_el = item.select_one("[class*='price']")
-        price_text = price_el.get_text() if price_el else "0"
-        digits = re.sub(r"\D", "", price_text)
-        price = int(digits) if digits else 0
+            window = html[max(0, pos - 6000):pos + 1000]
 
-        text = item.get_text(separator=" ")
-        year_match = re.search(r"\b(199\d|200\d|201\d|202[0-6])\b", text)
-        year = int(year_match.group(1)) if year_match else 0
+            price_m = re.search(r'"price_info":\{"price":(\d+)', window)
+            year_m  = re.search(r'"year":(\d{4})', window)
+            km_m    = re.search(r'"mileage":(\d+)', window)
+            mark_m  = re.search(r'"mark":"([^"]+)"', window)
+            model_m = re.search(r'"model":"([^"]+)"', window)
 
-        km_match = re.search(r"(\d[\d\s]+)\s*км", text)
-        mileage = int(re.sub(r"\D", "", km_match.group(1))) if km_match else 0
+            price = int(price_m.group(1)) if price_m else 0
+            year  = int(year_m.group(1)) if year_m else 0
 
-        listing_url = href if href.startswith("http") else f"https:{href}"
+            if price <= 0 or price > max_price:
+                continue
+            if year < 1990:
+                continue
 
-        # Пропускаем дилеров
-        text_lower = text.lower()
-        if any(w in text_lower for w in ("дилер", "dealer", "автосалон", "certified")):
-            return None
+            mileage = int(km_m.group(1)) if km_m else 0
+            mark    = mark_m.group(1).title() if mark_m else ""
+            model   = model_m.group(1).title() if model_m else ""
+            title   = f"{mark} {model}, {year}".strip(", ")
+            listing_url = f"https://auto.ru/cars/used/sale/{sid}/"
 
-        return {
-            "listing_id":       listing_id,
-            "source":           SOURCE,
-            "title":            title,
-            "price":            price,
-            "year":             year,
-            "mileage":          mileage,
-            "city":             "Москва",
-            "description":      text[:600],
-            "photo_count":      len(item.select("img")),
-            "photo_urls":       [],
-            "seller_ads_count": 0,
-            "seller_id":        "",
-            "published_at":     "",
-            "listing_url":      listing_url,
-            "is_regional":      False,
-        }
-    except Exception as e:
-        logging.debug(f"parse_autoru_item: {e}")
-        return None
+            results.append({
+                "listing_id":       sid,
+                "source":           SOURCE,
+                "title":            title,
+                "price":            price,
+                "year":             year,
+                "mileage":          mileage,
+                "city":             "Москва",
+                "description":      title,
+                "photo_count":      0,
+                "photo_urls":       [],
+                "seller_ads_count": 0,
+                "seller_id":        "",
+                "published_at":     "",
+                "listing_url":      listing_url,
+                "is_regional":      False,
+            })
+        except Exception as e:
+            logging.debug(f"Auto.ru parse item {sid}: {e}")
+
+    return results
 
 
 def _notify_stale_cookies():
