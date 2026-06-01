@@ -609,16 +609,20 @@ def get_top5_today() -> list:
         conn = _connect()
         cur = conn.cursor()
         cur.execute("""
-            SELECT title, listing_url, last_price, last_dcb_score
+            SELECT title, listing_url, last_price, last_dcb_score, source
             FROM seen_listings
-            WHERE last_notified IS NOT NULL AND date(last_notified)=?
+            WHERE last_dcb_score IS NOT NULL
+              AND date(first_seen)=?
+              AND source != 'test'
             ORDER BY last_dcb_score DESC
             LIMIT 5
         """, (today,))
         rows = cur.fetchall()
         conn.close()
-        return [{"title": r["title"] or "—", "score": r["last_dcb_score"] or 0,
-                 "price": r["last_price"] or 0, "url": r["listing_url"] or "—"}
+        return [{"title": r["title"] or f"[{r['source']}]",
+                 "score": r["last_dcb_score"] or 0,
+                 "price": r["last_price"] or 0,
+                 "url": r["listing_url"] or ""}
                 for r in rows]
     except Exception as e:
         logging.error(f"Ошибка get_top5_today: {e}")
@@ -702,7 +706,7 @@ def get_speed_stats() -> dict:
 
 
 def get_source_stats() -> dict:
-    """Количество уведомлений за сегодня по каждому источнику."""
+    """Количество найденных объявлений за сегодня по каждому источнику."""
     try:
         today = _today()
         conn = _connect()
@@ -710,8 +714,10 @@ def get_source_stats() -> dict:
         cur.execute("""
             SELECT source, COUNT(*) AS cnt
             FROM seen_listings
-            WHERE date(last_notified)=?
+            WHERE date(first_seen)=?
+              AND source != 'test'
             GROUP BY source
+            ORDER BY cnt DESC
         """, (today,))
         rows = cur.fetchall()
         conn.close()
