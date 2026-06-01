@@ -1,5 +1,14 @@
-__pycache__/
-*.pyc
+.env
+config.yaml
 *.db
 agent.log
+*.bak
+__pycache__/
+*.pyc
+*.pyo
 .venv/
+.pytest_cache/
+diar_session.session
+diar_session.session-journal
+debug_*.html
+/test_*.py
