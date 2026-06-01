@@ -207,8 +207,13 @@ def main():
     class _TokenFilter(logging.Filter):
         def filter(self, record):
             if _token:
-                record.msg = str(record.msg).replace(_token, "***TOKEN***")
-                record.args = ()
+                try:
+                    msg = record.getMessage()
+                    if _token in msg:
+                        record.msg = msg.replace(_token, "***TOKEN***")
+                        record.args = ()
+                except Exception:
+                    pass
             return True
 
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
