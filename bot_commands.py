@@ -358,27 +358,29 @@ async def cmd_deals(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/status — текущее состояние Авито и планировщика."""
     try:
-        blocks = {
-            "curl": RUNTIME_CONFIG.get("AVITO_CURL_BLOCKED_UNTIL", 0),
-            "firefox": RUNTIME_CONFIG.get("AVITO_FF_BLOCKED_UNTIL", 0),
-            "stealth": RUNTIME_CONFIG.get("AVITO_STEALTH_BLOCKED_UNTIL", 0),
-        }
         now = time.time()
-        blocked_parts = [f"{k}:{int((v-now)//60)}м" for k, v in blocks.items() if now < v]
-        avito_status = "заблокирован (" + ", ".join(blocked_parts) + ")" if blocked_parts else "работает"
 
-        last_parse = RUNTIME_CONFIG.get("LAST_AVITO_PARSE", 0)
-        ago = int((time.time() - last_parse) / 60) if last_parse else 999
-        min_interval = RUNTIME_CONFIG.get("AVITO_MIN_INTERVAL_SECONDS", 90)
-        paused = RUNTIME_CONFIG.get("PAUSED", False)
+        def _ago(key: str) -> str:
+            t = RUNTIME_CONFIG.get(key, 0)
+            return f"{int((now - t) / 60)} мин назад" if t else "не запускался"
+
+        def _blocked(key: str) -> str:
+            t = RUNTIME_CONFIG.get(key, 0)
+            return f"пауза {int((t - now) / 60)} мин" if now < t else "ок"
+
+        rss_cnt   = RUNTIME_CONFIG.get("AVITO_RSS_LAST_COUNT", "—")
+        curl_cnt  = RUNTIME_CONFIG.get("AVITO_CURL_LAST_COUNT", "—")
+        paused    = RUNTIME_CONFIG.get("PAUSED", False)
+        min_interval = RUNTIME_CONFIG.get("AVITO_MIN_INTERVAL_SECONDS", 180)
 
         text = (
             f"Статус Diar Car Buy AI\n"
             f"{LINE}\n"
-            f"Авито:      {avito_status}\n"
-            f"Последний запрос: {ago} мин назад\n"
-            f"Пауза между запросами: {min_interval}с\n"
+            f"Авито RSS:        {_ago('AVITO_RSS_LAST')}, {rss_cnt} объявлений — {_blocked('AVITO_CURL_BLOCKED_UNTIL')}\n"
+            f"Авито curl:       {_ago('AVITO_CURL_LAST')}, {curl_cnt} объявлений — {_blocked('AVITO_CURL_BLOCKED_UNTIL')}\n"
+            f"Авито Playwright: {_ago('AVITO_PLAYWRIGHT_LAST')} — {_blocked('AVITO_STEALTH_BLOCKED_UNTIL')}\n"
             f"{LINE}\n"
+            f"Пауза между запросами: {min_interval}с\n"
             f"Остальные источники: работают\n"
             f"Мониторинг: {'на паузе' if paused else 'активен'}\n"
             f"Scheduler: активен\n"
