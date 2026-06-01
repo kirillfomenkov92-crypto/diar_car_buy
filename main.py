@@ -61,7 +61,7 @@ async def _process_listings(listings: list, tag: str = ""):
             min_score = RUNTIME_CONFIG.get("MIN_DCB_SCORE", 80)
 
             if result["dcb_score"] >= min_score:
-                send_notification(result)
+                await asyncio.to_thread(send_notification, result)
                 increment_notified(result["dcb_score"])
                 age = result.get("age_minutes", 999)
                 if age < 999:

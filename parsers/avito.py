@@ -229,7 +229,8 @@ def parse() -> list:
     now = time.time()
 
     # ── Уровень 1: RSS / curl_cffi с прогревом ──────────────────────────
-    rss_blocked = now < RUNTIME_CONFIG.get("AVITO_CURL_BLOCKED_UNTIL", 0)
+    # RSS имеет собственный ключ блокировки — не зависит от curl 403
+    rss_blocked = now < RUNTIME_CONFIG.get("AVITO_RSS_BLOCKED_UNTIL", 0)
     if not rss_blocked:
         try:
             from parsers.avito_rss import parse as rss_parse

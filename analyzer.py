@@ -92,7 +92,7 @@ def analyze_listing(listing: dict) -> dict:
 
     # ── Предфильтр: цена выше рынка → не тратим Groq ─────────────────────
     market_avg = market.get("market_avg", 0)
-    if market_avg > 0 and price_val >= market_avg:
+    if market_avg > 0 and price_val > market_avg * 1.05:
         logging.info(f"Пропущено (цена {price_val:,} >= рынок {market_avg:,}): {listing.get('title', '')}")
         return {
             "dcb_score": 0, "verdict": "Цена выше рынка — пропущено",
@@ -117,13 +117,13 @@ def analyze_listing(listing: dict) -> dict:
 Описание: {str(listing.get('description', ''))[:500]}
 
 РЫНОЧНЫЙ АНАЛИЗ:
-Средняя цена рынка: {_fmt(market['market_avg'])} ₽
-Минимум на рынке: {_fmt(market['market_min'])} ₽
-Аналогов на рынке: {market['market_count']}
-Недооценённость: {market['undervaluation_pct']}%
-Дешевле {market['price_percentile']}% аналогов
-Тренд рынка: {market['trend']}
-Ликвидность модели: {market['liquidity_days']} дней
+Средняя цена рынка: {_fmt(market.get('market_avg', 0))} ₽
+Минимум на рынке: {_fmt(market.get('market_min', 0))} ₽
+Аналогов на рынке: {market.get('market_count', 0)}
+Недооценённость: {market.get('undervaluation_pct', 0)}%
+Дешевле {market.get('price_percentile', 0)}% аналогов
+Тренд рынка: {market.get('trend', '—')}
+Ликвидность модели: {market.get('liquidity_days', '—')} дней
 
 ПРОФИЛЬ ПРОДАВЦА:
 Мотивация: {seller['motivation_score']}/100
@@ -196,7 +196,7 @@ def analyze_listing(listing: dict) -> dict:
         logging.error(f"Ошибка парсинга ответа Groq: {e}")
 
     # Groq вернул пустой ответ — считаем score локально чтобы не потерять объявление
-    if dcb_score == 0 and not full_text.strip():
+    if dcb_score == 0 and (not full_text.strip() or full_text.startswith("Ошибка")):
         underval = market.get("undervaluation_pct", 0)
         fraud_penalty = fraud.get("risk_score", 0)
         motivation_bonus = min(seller.get("motivation_score", 0) // 2, 20)

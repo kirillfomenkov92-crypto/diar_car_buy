@@ -100,14 +100,24 @@ def send_notification(result: dict):
             logging.error("Не задан TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID")
             return
 
-        # Атомарно помечаем ДО отправки — если два цикла дошли сюда одновременно,
-        # только тот у кого rowcount>0 отправит уведомление
+        # Отправляем СНАЧАЛА, помечаем как уведомлённое только при успехе.
+        # Если два цикла пришли одновременно — первый пройдёт mark_notified,
+        # второй вернёт False и пропустит повторную отправку.
+        send_ok = False
+        try:
+            for part in parts:
+                _send_part(token, chat_id, part)
+            send_ok = True
+        except Exception as send_err:
+            logging.error(f"Отправка не удалась для {listing_id}: {send_err}")
+
+        if not send_ok:
+            logging.warning(f"Уведомление НЕ помечено (отправка провалилась): {listing_id}")
+            return
+
         if not mark_notified(listing_id, source, dcb_score):
             logging.info(f"Пропуск {listing_id}: уже помечено другим циклом")
             return
-
-        for part in parts:
-            _send_part(token, chat_id, part)
 
         logging.info(f"Уведомление отправлено: {listing_id} ({source}), score={dcb_score}")
 

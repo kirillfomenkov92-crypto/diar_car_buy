@@ -139,9 +139,8 @@ def _parse_city(url: str, city: str, is_regional: bool,
                 continue
             if listing["price"] <= 0:
                 continue
-            if not is_regional and listing["price"] > max_price:
-                continue
-            if listing["price"] > max_price * 1.5:
+            # Ценовой фильтр ДО is_seen/mark_seen — дорогие не попадают в БД
+            if listing["price"] > max_price:
                 continue
             if is_seen(listing["listing_id"], SOURCE):
                 continue
