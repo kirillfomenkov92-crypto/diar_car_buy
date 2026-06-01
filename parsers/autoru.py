@@ -101,6 +101,11 @@ def _parse_from_json(html: str, max_price: int) -> list:
     sale_ids = [(m.group(1), m.start()) for m in re.finditer(r'"saleId":"([\d]+-[a-f\d]+)"', html)]
     logging.info(f"Auto.ru: найдено {len(sale_ids)} saleId в JSON")
 
+    # Глобальный индекс numeric_id → (mark, model) из всех URL страницы
+    url_index: dict[str, tuple[str, str]] = {}
+    for um in re.finditer(r'auto\.ru/cars/used/sale/([a-z0-9_]+)/([a-z0-9_]+)/(\d{7,})', html):
+        url_index[um.group(3)] = (um.group(1), um.group(2))
+
     results = []
     seen_ids = set()
     for sid, pos in sale_ids:
@@ -117,9 +122,6 @@ def _parse_from_json(html: str, max_price: int) -> list:
             price_m = re.search(r'"price_info":\{"price":(\d+)', window)
             year_m  = re.search(r'"year":(\d{4})', window)
             km_m    = re.search(r'"mileage":(\d+)', window)
-            mark_m  = re.search(r'"mark":"([^"]+)"', window)
-            model_m = re.search(r'"model":"([^"]+)"', window)
-
             price = int(price_m.group(1)) if price_m else 0
             year  = int(year_m.group(1)) if year_m else 0
 
@@ -128,11 +130,16 @@ def _parse_from_json(html: str, max_price: int) -> list:
             if year < 1990:
                 continue
 
+            numeric_id = sid.split("-")[0]
             mileage = int(km_m.group(1)) if km_m else 0
-            mark    = mark_m.group(1).title() if mark_m else ""
-            model   = model_m.group(1).title() if model_m else ""
-            title   = f"{mark} {model}, {year}".strip(", ")
-            listing_url = f"https://auto.ru/cars/used/sale/{sid}/"
+            mark_slug, model_slug = url_index.get(numeric_id, ("", ""))
+            mark  = mark_slug.replace("_", " ").title()
+            model = model_slug.replace("_", " ").title()
+            listing_url = (
+                f"https://auto.ru/cars/used/sale/{mark_slug}/{model_slug}/{numeric_id}/"
+                if mark_slug else f"https://auto.ru/cars/used/sale/{sid}/"
+            )
+            title = f"{mark} {model}, {year}".strip(" ,") if (mark or model) else str(year)
 
             results.append({
                 "listing_id":       sid,
