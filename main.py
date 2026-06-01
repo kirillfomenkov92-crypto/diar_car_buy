@@ -70,6 +70,13 @@ async def _process_listings(listings: list, tag: str = ""):
                     f"{tag} ✅ {listing['title']} | {listing['price']:,}₽"
                     f" | Score:{result['dcb_score']} | {src}"
                 )
+            else:
+                logging.info(
+                    f"ПРОПУСК: {listing.get('title', '?')} | "
+                    f"{listing.get('price', 0):,}₽ | "
+                    f"Score {result['dcb_score']} | "
+                    f"{result.get('reject_reason', '')} | {src}"
+                )
 
         except Exception as e:
             logging.error(f"{tag} listing {listing.get('listing_id')}: {e}")
@@ -122,6 +129,20 @@ async def fast_cycle():
         await asyncio.to_thread(_send_tg_message, notify_text)
         logging.info(f"[FAST] {notify_text}")
 
+    # Адаптивный интервал по времени суток
+    new_interval = get_current_fast_interval()
+    if RUNTIME_CONFIG.get("_FAST_INTERVAL_CURRENT") != new_interval:
+        try:
+            _scheduler = RUNTIME_CONFIG.get("_SCHEDULER")
+            if _scheduler:
+                _scheduler.reschedule_job(
+                    "fast_cycle", trigger="interval", minutes=new_interval
+                )
+                RUNTIME_CONFIG["_FAST_INTERVAL_CURRENT"] = new_interval
+                logging.info(f"[FAST] интервал обновлён: {new_interval} мин")
+        except Exception as _e:
+            logging.debug(f"reschedule: {_e}")
+
     fresh = [
         l for l in listings
         if calculate_listing_age_minutes(l.get("published_at", "")) <= 30
@@ -129,6 +150,18 @@ async def fast_cycle():
     logging.info(f"[FAST] Свежих (до 30 мин): {len(fresh)} из {len(listings)}")
 
     await _process_listings(fresh, tag="[FAST]")
+
+
+def get_current_fast_interval() -> int:
+    """Возвращает интервал fast_cycle зависимости от времени суток."""
+    from datetime import datetime as _dt
+    hour = _dt.now().hour
+    if 0 <= hour < 8:
+        return RUNTIME_CONFIG.get("FAST_INTERVAL_NIGHT", 2)
+    elif 9 <= hour < 18:
+        return RUNTIME_CONFIG.get("FAST_INTERVAL_DAY", 8)
+    else:
+        return RUNTIME_CONFIG.get("FAST_INTERVAL_EVENING", 3)
 
 
 async def monitor_cycle():
@@ -188,6 +221,8 @@ async def run():
         max_instances=1, misfire_grace_time=120,
     )
     scheduler.start()
+    RUNTIME_CONFIG["_SCHEDULER"] = scheduler
+    RUNTIME_CONFIG["_FAST_INTERVAL_CURRENT"] = fast_interval
     logging.info(
         f"Diar Car Buy AI v3.0 запущен. "
         f"Быстрый цикл: {fast_interval} мин | Полный цикл: {full_interval} мин"

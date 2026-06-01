@@ -422,6 +422,120 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Ошибка cmd_help: {e}")
 
 
+@authorized_only
+async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/history — объявления у которых цена менялась (мотивированные продавцы)."""
+    try:
+        import sqlite3, json
+        from database import DB_PATH
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("""
+            SELECT title, listing_url, price_history, source
+            FROM seen_listings
+            WHERE json_array_length(price_history) >= 2
+            ORDER BY json_array_length(price_history) DESC
+            LIMIT 10
+        """).fetchall()
+        conn.close()
+
+        if not rows:
+            await update.message.reply_text("Нет объявлений с историей цен.")
+            return
+
+        lines = [f"📉 СНИЖЕНИЯ ЦЕН ({len(rows)})\n{LINE}"]
+        for r in rows:
+            try:
+                hist = json.loads(r["price_history"] or "[]")
+                if len(hist) < 2:
+                    continue
+                first_p = hist[0]["price"]
+                last_p  = hist[-1]["price"]
+                drop    = first_p - last_p
+                changes = len(hist) - 1
+                title   = r["title"] or f"[{r['source']}]"
+                url     = r["listing_url"] or ""
+                lines.append(
+                    f"🔻 {title[:35]}\n"
+                    f"   {first_p:,} → {last_p:,} ₽ (-{drop:,} ₽, {changes} раз)\n"
+                    f"   {url}"
+                )
+            except Exception:
+                continue
+        lines.append(LINE)
+        await update.message.reply_text("\n".join(lines), disable_web_page_preview=True)
+    except Exception as e:
+        logging.error(f"Ошибка cmd_history: {e}")
+
+
+@authorized_only
+async def cmd_calibrate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/calibrate — самокалибровка на основе реальных сделок."""
+    try:
+        import sqlite3
+        from database import DB_PATH
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+
+        total = conn.execute(
+            "SELECT COUNT(*) FROM deals WHERE status='closed'"
+        ).fetchone()[0]
+
+        if total < 5:
+            await update.message.reply_text(
+                f"📊 Калибровка недоступна\n{LINE}\n"
+                f"Закрытых сделок: {total}/5\n"
+                f"Закрой 5+ сделок через /sold для точной калибровки."
+            )
+            conn.close()
+            return
+
+        rows = conn.execute("""
+            SELECT model, AVG(roi) as avg_roi, AVG(days_held) as avg_days,
+                   AVG(profit) as avg_profit, COUNT(*) as cnt
+            FROM deals WHERE status='closed'
+            GROUP BY model ORDER BY AVG(roi) DESC
+        """).fetchall()
+
+        avg_score = conn.execute(
+            "SELECT AVG(dcb_score_at_buy) FROM deals WHERE status='closed'"
+        ).fetchone()[0] or 0
+
+        avg_days_real = conn.execute(
+            "SELECT AVG(days_held) FROM deals WHERE status='closed'"
+        ).fetchone()[0] or 0
+
+        conn.close()
+
+        min_score = RUNTIME_CONFIG.get("MIN_DCB_SCORE", 80)
+        score_gap  = int(avg_score) - min_score
+        rec = ""
+        if score_gap < -5:
+            rec = f"Твой реальный порог ~{int(avg_score)}, в боте {min_score} — повысь порог"
+        elif score_gap > 10:
+            rec = f"Твой реальный порог ~{int(avg_score)}, в боте {min_score} — можно снизить"
+        else:
+            rec = "Порог настроен оптимально"
+
+        lines = [f"🎯 КАЛИБРОВКА\n{LINE}"]
+        lines.append(f"Сделок закрыто: {total}")
+        lines.append(f"Средний score покупки: {int(avg_score)}/100")
+        lines.append(f"Средний срок продажи: {int(avg_days_real or 0)} дней")
+        lines.append(f"\n💡 {rec}\n{LINE}")
+        lines.append("ТОП МОДЕЛЕЙ:")
+        for r in rows[:5]:
+            lines.append(
+                f"  {r['model'][:25]} — "
+                f"ROI {r['avg_roi']:.0f}%, "
+                f"+{_fmt(r['avg_profit'])} ₽, "
+                f"{r['cnt']} сделок"
+            )
+        lines.append(LINE)
+        await update.message.reply_text("\n".join(lines))
+    except Exception as e:
+        logging.error(f"Ошибка cmd_calibrate: {e}")
+
+
 def get_command_handlers() -> list:
     """Вернуть список (команда, обработчик) для регистрации в приложении."""
     return [
@@ -440,5 +554,7 @@ def get_command_handlers() -> list:
         ("bought", cmd_bought),
         ("sold", cmd_sold),
         ("deals", cmd_deals),
+        ("history", cmd_history),
+        ("calibrate", cmd_calibrate),
         ("help", cmd_help),
     ]

@@ -211,10 +211,23 @@ def analyze_listing(listing: dict) -> dict:
     # Финальная валидация — score всегда в диапазоне 0..100
     dcb_score = max(0, min(100, dcb_score))
 
+    # Причина отказа — формируется для логирования пропущенных объявлений
+    reject_reasons = []
+    if seller.get("reseller_probability", 0) >= 70:
+        reject_reasons.append("перекуп")
+    if fraud.get("risk_score", 0) >= 50:
+        reject_reasons.append(f"риски: {fraud.get('risk_level', '?')}")
+    if listing.get("mileage", 0) > 200000:
+        reject_reasons.append("высокий пробег")
+    if market.get("undervaluation_pct", 0) < 5:
+        reject_reasons.append("цена не ниже рынка")
+    reject_reason = ", ".join(reject_reasons) if reject_reasons else "низкий общий балл"
+
     return {
         "dcb_score": dcb_score,
         "verdict": verdict,
         "full_analysis": full_text,
+        "reject_reason": reject_reason,
         "listing": listing,
         "market": market,
         "seller": seller,
