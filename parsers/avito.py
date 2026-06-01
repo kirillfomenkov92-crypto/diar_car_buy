@@ -82,10 +82,10 @@ def _extract_mileage(text: str) -> int:
 
 def _parse_main() -> list:
     """Парсит Avito через Playwright headless Firefox."""
-    blocked_until = RUNTIME_CONFIG.get("AVITO_BLOCKED_UNTIL", 0)
+    blocked_until = RUNTIME_CONFIG.get("AVITO_FF_BLOCKED_UNTIL", 0)
     if time.time() < blocked_until:
         mins = int((blocked_until - time.time()) / 60)
-        logging.info(f"Авито: пауза ещё {mins} мин")
+        logging.info(f"Авито Firefox: пауза ещё {mins} мин")
         return []
 
     try:
@@ -133,9 +133,9 @@ def _parse_main() -> list:
 
             content_lower = page.content().lower()
             if is_captcha_response(content_lower):
-                RUNTIME_CONFIG["AVITO_BLOCKED_UNTIL"] = time.time() + 3600
+                RUNTIME_CONFIG["AVITO_FF_BLOCKED_UNTIL"] = time.time() + 3600
                 RUNTIME_CONFIG["AVITO_WAS_BLOCKED"] = True
-                logging.warning("Авито: капча — пауза 60 минут")
+                logging.warning("Авито Firefox: капча — пауза 60 минут")
                 browser.close()
                 return []
 

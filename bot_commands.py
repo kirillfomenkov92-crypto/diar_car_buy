@@ -358,12 +358,14 @@ async def cmd_deals(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/status — текущее состояние Авито и планировщика."""
     try:
-        blocked_until = RUNTIME_CONFIG.get("AVITO_BLOCKED_UNTIL", 0)
-        if time.time() < blocked_until:
-            mins = int((blocked_until - time.time()) / 60)
-            avito_status = f"заблокирован ещё {mins} мин"
-        else:
-            avito_status = "работает"
+        blocks = {
+            "curl": RUNTIME_CONFIG.get("AVITO_CURL_BLOCKED_UNTIL", 0),
+            "firefox": RUNTIME_CONFIG.get("AVITO_FF_BLOCKED_UNTIL", 0),
+            "stealth": RUNTIME_CONFIG.get("AVITO_STEALTH_BLOCKED_UNTIL", 0),
+        }
+        now = time.time()
+        blocked_parts = [f"{k}:{int((v-now)//60)}м" for k, v in blocks.items() if now < v]
+        avito_status = "заблокирован (" + ", ".join(blocked_parts) + ")" if blocked_parts else "работает"
 
         last_parse = RUNTIME_CONFIG.get("LAST_AVITO_PARSE", 0)
         ago = int((time.time() - last_parse) / 60) if last_parse else 999

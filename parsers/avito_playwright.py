@@ -98,10 +98,10 @@ async def _parse_item(item) -> dict | None:
 async def parse_async() -> list:
     """Основной async парсер через Playwright + stealth."""
     import time
-    blocked_until = RUNTIME_CONFIG.get("AVITO_BLOCKED_UNTIL", 0)
+    blocked_until = RUNTIME_CONFIG.get("AVITO_STEALTH_BLOCKED_UNTIL", 0)
     if time.time() < blocked_until:
         mins = int((blocked_until - time.time()) / 60)
-        logging.info(f"Авито Playwright: пауза ещё {mins} мин")
+        logging.info(f"Avito Stealth: пауза ещё {mins} мин")
         return []
 
     max_price = RUNTIME_CONFIG.get("MAX_PRICE", 150000)
@@ -152,9 +152,9 @@ async def parse_async() -> list:
             page_html = await page.content()
             if is_captcha_response(page_html):
                 import time as _time
-                RUNTIME_CONFIG["AVITO_BLOCKED_UNTIL"] = _time.time() + 3600
+                RUNTIME_CONFIG["AVITO_STEALTH_BLOCKED_UNTIL"] = _time.time() + 3600
                 RUNTIME_CONFIG["AVITO_WAS_BLOCKED"] = True
-                logging.warning("Авито Playwright: капча — пауза 60 минут")
+                logging.warning("Avito Stealth: капча — пауза 60 минут")
                 await browser.close()
                 return []
 

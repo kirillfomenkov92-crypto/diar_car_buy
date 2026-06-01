@@ -83,7 +83,7 @@ def parse() -> list:
     cookies = _browser_cookies()
     logging.info(f"Avito curl_cffi: {len(cookies)} куки из браузера")
 
-    blocked_until = RUNTIME_CONFIG.get("AVITO_BLOCKED_UNTIL", 0)
+    blocked_until = RUNTIME_CONFIG.get("AVITO_CURL_BLOCKED_UNTIL", 0)
     if time.time() < blocked_until:
         mins = int((blocked_until - time.time()) / 60)
         logging.info(f"Avito curl_cffi: пауза ещё {mins} мин")
@@ -112,7 +112,7 @@ def parse() -> list:
 
     if resp.status_code == 403:
         logging.warning("Avito curl_cffi: 403 — IP временно заблокирован, пауза 15 мин")
-        RUNTIME_CONFIG["AVITO_BLOCKED_UNTIL"] = time.time() + 900
+        RUNTIME_CONFIG["AVITO_CURL_BLOCKED_UNTIL"] = time.time() + 900
         return []
     if resp.status_code != 200:
         logging.warning(f"Avito curl_cffi: HTTP {resp.status_code}")
@@ -125,7 +125,7 @@ def parse() -> list:
     if not cards:
         low = resp.text.lower()
         if any(p in low for p in _CAPTCHA_PHRASES):
-            RUNTIME_CONFIG["AVITO_BLOCKED_UNTIL"] = time.time() + 1800
+            RUNTIME_CONFIG["AVITO_CURL_BLOCKED_UNTIL"] = time.time() + 1800
             logging.warning("Avito curl_cffi: капча — пауза 30 минут")
         else:
             logging.warning("Avito curl_cffi: карточки не найдены — возможно изменился HTML")
