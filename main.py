@@ -31,8 +31,16 @@ from parsers.tg_parser import parse as tg_parse
 
 async def _process_listings(listings: list, tag: str = ""):
     """Общая логика анализа и уведомлений для списка объявлений."""
+    max_price = RUNTIME_CONFIG.get("MAX_PRICE", 150000)
     for listing in listings:
         try:
+            if listing.get("price", 0) > max_price:
+                logging.debug(
+                    f"Пропуск: цена {listing['price']} > MAX_PRICE {max_price} "
+                    f"({listing.get('title', listing.get('listing_id'))})"
+                )
+                continue
+
             lid = listing["listing_id"]
             src = listing["source"]
 

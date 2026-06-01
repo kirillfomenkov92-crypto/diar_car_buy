@@ -46,6 +46,16 @@ def send_notification(result: dict):
         strategy = result.get("strategy", {})
         arbitrage = result.get("arbitrage")
 
+        # Финальная проверка цены — блокируем уведомления дороже бюджета
+        price = listing.get("price", 0)
+        max_price = RUNTIME_CONFIG.get("MAX_PRICE", 150000)
+        if price > max_price:
+            logging.warning(
+                f"Блокировка уведомления: цена {price:,} > MAX_PRICE {max_price:,} "
+                f"({listing_id})"
+            )
+            return
+
         # Дедупликация: пропускаем если оценка не изменилась
         if was_notified(listing_id, source):
             if not score_changed(listing_id, source, dcb_score):
