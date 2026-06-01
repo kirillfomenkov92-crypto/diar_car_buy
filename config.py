@@ -1,28 +1,17 @@
-"""
-config.py — загрузка и хранение конфигурации Diar Car Buy AI.
-
-Конфигурация читается из config.yaml, но значения PAUSED, MAX_PRICE и
-MIN_DCB_SCORE могут изменяться в runtime через команды бота. Текущее
-состояние хранится в словаре RUNTIME_CONFIG и доступно всем модулям.
-"""
+# config.py — загрузка и хранение конфигурации Diar Car Buy AI v3.0.
 
 import logging
 import yaml
 
 CONFIG_PATH = "config.yaml"
 
-# Изменяемая в runtime конфигурация. Заполняется при первом load_config().
+# Изменяемый в runtime словарь — заполняется при старте из config.yaml.
+# Доступен из любого модуля без перезапуска.
 RUNTIME_CONFIG = {}
 
 
-def load_config():
-    """
-    Загрузить конфигурацию из config.yaml в RUNTIME_CONFIG.
-
-    Загрузка выполняется один раз: при повторных вызовах возвращается уже
-    изменённое в runtime состояние (чтобы не затирать /pause, /budget и т.п.).
-    Возвращает словарь RUNTIME_CONFIG.
-    """
+def load_config() -> dict:
+    """Прочитать config.yaml и заполнить RUNTIME_CONFIG. При повторном вызове возвращает текущее runtime-состояние."""
     global RUNTIME_CONFIG
     if RUNTIME_CONFIG:
         return RUNTIME_CONFIG
@@ -32,18 +21,24 @@ def load_config():
         RUNTIME_CONFIG.update(data)
     except Exception as e:
         logging.error(f"Ошибка загрузки config.yaml: {e}")
+
+    # Значения из .env перекрывают config.yaml (секреты не хранятся в репо)
+    try:
+        from dotenv import load_dotenv
+        import os
+        load_dotenv()
+        for key in ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "GEMINI_API_KEY", "GROQ_API_KEY"]:
+            env_val = os.getenv(key)
+            if env_val:
+                RUNTIME_CONFIG[key] = env_val
+    except ImportError:
+        pass  # python-dotenv не установлен — работаем только с config.yaml
+
     return RUNTIME_CONFIG
 
 
-def reload_config():
-    """Принудительно перечитать config.yaml с диска, затерев runtime-значения."""
-    global RUNTIME_CONFIG
-    RUNTIME_CONFIG.clear()
-    return load_config()
-
-
-def set_value(key, value):
-    """Изменить значение конфигурации в runtime (без записи на диск)."""
+def set_value(key: str, value) -> dict:
+    """Изменить значение ключа в runtime без записи на диск."""
     cfg = load_config()
     cfg[key] = value
     return cfg

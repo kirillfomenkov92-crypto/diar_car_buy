@@ -1,176 +1,156 @@
-"""
-parsers/drom.py — парсер объявлений о продаже авто с Drom.ru.
+# parsers/drom.py — парсер Drom.ru через curl_cffi (TLS fingerprint Chrome 124).
+# Москва + региональные URL (для арбитража). is_regional=True для регионов.
 
-Логика аналогична парсеру Avito: requests + BeautifulSoup, ротация
-User-Agent, случайные задержки, фильтрация по цене и городу. Все ошибки
-перехватываются и логируются, наружу исключения не выбрасываются.
-"""
-
-import random
-import time
-import logging
 import re
+import time
+import random
+import logging
 
-import requests
 from bs4 import BeautifulSoup
 
-from config import load_config
+from config import load_config, RUNTIME_CONFIG
+from database import is_seen
+from utils.headers import get_drom_headers
 
 SOURCE = "drom"
 
-# Базовый URL поиска по Москве. Шаблон — реальные параметры могут отличаться.
-BASE_URL = "https://moscow.drom.ru/auto/all/"
-
-# Список User-Agent для ротации (минимум 5 строк)
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+DROM_URLS = [
+    "https://auto.drom.ru/moskva/all/price-{max_price}/",
+    "https://auto.drom.ru/tula/all/price-130000/",
+    "https://auto.drom.ru/ryazan/all/price-130000/",
+    "https://auto.drom.ru/kaluga/all/price-130000/",
+    "https://auto.drom.ru/vladimir/all/price-130000/",
+    "https://auto.drom.ru/tver/all/price-130000/",
 ]
 
 
-def _headers():
-    """Сформировать HTTP-заголовки со случайным User-Agent."""
-    return {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept-Language": "ru-RU,ru;q=0.9",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    }
-
-
-def _sleep():
-    """Случайная пауза 2–5 секунд между запросами."""
-    time.sleep(random.uniform(2, 5))
-
-
-def _parse_price(text):
-    """Извлечь целое число рублей из строки, вернуть 0 при неудаче."""
+def parse() -> list:
+    """Парсит Drom.ru через curl_cffi с TLS fingerprint Chrome 124."""
+    load_config()
     try:
-        digits = "".join(ch for ch in text if ch.isdigit())
-        return int(digits) if digits else 0
-    except Exception:
-        return 0
+        from curl_cffi.requests import Session as CurlSession
+    except ImportError:
+        logging.error("Drom: curl_cffi не установлен — pip install curl_cffi")
+        return []
 
+    max_price = RUNTIME_CONFIG.get("MAX_PRICE", 150000)
+    session = CurlSession(impersonate="chrome124")
+    results = []
 
-def _extract_year(text):
-    """Найти год выпуска (1980–2030) в тексте."""
-    try:
-        for m in re.findall(r"(19[89]\d|20[0-3]\d)", text):
-            return int(m)
-    except Exception:
-        pass
-    return 0
+    urls = [DROM_URLS[0].format(max_price=max_price)] + DROM_URLS[1:]
 
+    for i, url in enumerate(urls):
+        is_regional = i > 0
+        city_slug = url.split("drom.ru/")[1].split("/")[0]
+        city = _CITY_NAMES.get(city_slug, city_slug.capitalize())
 
-def _extract_mileage(text):
-    """Найти пробег в км в тексте, вернуть 0 при неудаче."""
-    try:
-        m = re.search(r"([\d\s]+)\s*км", text)
-        if m:
-            return _parse_price(m.group(1))
-    except Exception:
-        pass
-    return 0
+        time.sleep(random.uniform(2, 5))
 
+        try:
+            response = session.get(url, headers=get_drom_headers(), timeout=20)
+        except Exception as e:
+            logging.error(f"Drom {city}: {e}")
+            continue
 
-def _passes_filters(listing, cfg):
-    """Проверить объявление по фильтрам цены и города из конфигурации."""
-    max_price = cfg.get("MAX_PRICE", 140000)
-    if listing["price"] <= 0 or listing["price"] > max_price:
-        return False
-    cities = cfg.get("CITIES", [])
-    if cities:
-        city = (listing.get("city") or "").lower()
-        if not any(c.lower() in city for c in cities):
-            return False
-    return True
+        if response.status_code != 200:
+            logging.warning(f"Drom {city}: статус {response.status_code}")
+            continue
 
-
-def _parse_card(card):
-    """
-    Разобрать один блок объявления Drom в dict.
-
-    Возвращает dict или None при ошибке. Селекторы выбраны мягко, так как
-    разметка Drom может меняться.
-    """
-    try:
-        link = card.find("a", href=True)
-        listing_url = link.get("href") if link else ""
-        if listing_url and not listing_url.startswith("http"):
-            listing_url = f"https://moscow.drom.ru{listing_url}"
-
-        # ID объявления вытаскиваем из URL
-        m = re.search(r"/(\d+)\.html", listing_url)
-        listing_id = m.group(1) if m else listing_url
-
-        title_tag = card.find("h3") or card.find(attrs={"data-ftid": "bull_title"})
-        title = title_tag.get_text(strip=True) if title_tag else ""
-
-        price_tag = card.find(attrs={"data-ftid": "bull_price"}) or card.find(
-            class_=re.compile("price")
+        soup = BeautifulSoup(response.text, "lxml")
+        items = (
+            soup.select("div[data-ftid='bulls-list_bull']")
+            or soup.select("article.bull-item")
+            or soup.select("div[class*='bull-item']")
         )
-        price = _parse_price(price_tag.get_text()) if price_tag else 0
+        logging.info(f"Drom {city}: найдено {len(items)} карточек")
 
-        desc_tag = card.find(attrs={"data-ftid": "component_inline-bull-description"})
-        description = desc_tag.get_text(" ", strip=True) if desc_tag else title
+        for item in items[:20]:
+            try:
+                listing = _parse_item(item, city, is_regional)
+                if listing is None:
+                    continue
+                if listing["price"] <= 0:
+                    continue
+                if not is_regional and listing["price"] > max_price:
+                    continue
+                if is_seen(listing["listing_id"], SOURCE):
+                    continue
+                results.append(listing)
+            except Exception as e:
+                logging.debug(f"Drom item {city}: {e}")
 
-        photos = card.find_all("img")
-        photo_urls = [img.get("src") for img in photos if img.get("src")]
-        photo_count = len(photo_urls)
+        logging.info(f"Drom {city}: {len([r for r in results if r['city'] == city])} новых")
 
-        year = _extract_year(title + " " + description)
-        mileage = _extract_mileage(description)
+    logging.info(f"Drom итого: {len(results)} новых объявлений")
+    return results
+
+
+def _parse_item(item, city: str, is_regional: bool) -> dict | None:
+    """Разобрать карточку объявления Drom из BeautifulSoup."""
+    try:
+        link = (
+            item.select_one("a[data-ftid='bull_title']")
+            or item.select_one("a[href*='drom.ru']")
+        )
+        if not link:
+            return None
+
+        href = link.get("href", "")
+        id_match = re.search(r"(\d{6,})", href)
+        listing_id = id_match.group(1) if id_match else None
+        if not listing_id:
+            return None
+
+        title = link.get_text(strip=True)[:100]
+
+        price_el = (
+            item.select_one("[data-ftid='bull_price']")
+            or item.select_one("[class*='price']")
+        )
+        price_text = price_el.get_text() if price_el else "0"
+        digits = re.sub(r"\D", "", price_text)
+        price = int(digits) if digits else 0
+
+        text = item.get_text(separator=" ")
+        year_match = re.search(r"\b(199\d|200\d|201\d|202[0-6])\b", text)
+        year = int(year_match.group(1)) if year_match else 0
+
+        km_match = re.search(r"(\d[\d\s]+)\s*км", text)
+        mileage = int(re.sub(r"\D", "", km_match.group(1))) if km_match else 0
+
+        date_el = (
+            item.select_one("span[class*='date']")
+            or item.select_one("[data-ftid*='date']")
+        )
+        published_at = date_el.get_text(strip=True) if date_el else ""
 
         return {
-            "listing_id": str(listing_id),
-            "source": SOURCE,
-            "title": title,
-            "price": price,
-            "year": year,
-            "mileage": mileage,
-            "city": "Москва",
-            "description": description,
-            "photo_count": photo_count,
-            "photo_urls": photo_urls,
+            "listing_id":       listing_id,
+            "source":           SOURCE,
+            "title":            title,
+            "price":            price,
+            "year":             year,
+            "mileage":          mileage,
+            "city":             city,
+            "description":      text[:600],
+            "photo_count":      len(item.select("img")),
+            "photo_urls":       [],
             "seller_ads_count": 0,
-            "listing_url": listing_url,
+            "seller_id":        "",
+            "published_at":     published_at,
+            "listing_url":      href,
+            "is_regional":      is_regional,
         }
     except Exception as e:
-        logging.error(f"Drom: ошибка разбора карточки: {e}")
+        logging.debug(f"parse_drom_item: {e}")
         return None
 
 
-def parse():
-    """
-    Основная точка входа парсера Drom.
-
-    Возвращает список dict с объявлениями, прошедшими фильтры.
-    Никогда не выбрасывает исключения наружу.
-    """
-    cfg = load_config()
-    results = []
-    try:
-        _sleep()
-        resp = requests.get(BASE_URL, headers=_headers(), timeout=20)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "lxml")
-
-        cards = soup.find_all(attrs={"data-ftid": "bulls-list_bull"})
-        if not cards:
-            cards = soup.find_all("a", attrs={"data-ftid": "bull_title"})
-
-        for card in cards:
-            listing = _parse_card(card)
-            if listing and _passes_filters(listing, cfg):
-                results.append(listing)
-
-        logging.info(f"Drom: собрано {len(results)} объявлений после фильтрации")
-    except requests.RequestException as e:
-        logging.error(f"Drom: сетевая ошибка: {e}")
-    except Exception as e:
-        logging.error(f"Drom: непредвиденная ошибка: {e}")
-
-    return results
+_CITY_NAMES = {
+    "moskva": "Москва",
+    "tula":   "Тула",
+    "ryazan": "Рязань",
+    "kaluga": "Калуга",
+    "vladimir": "Владимир",
+    "tver":   "Тверь",
+}

@@ -1,32 +1,33 @@
-"""
-analyzer.py — анализ объявления через Claude API для Diar Car Buy AI.
-
-Собирает контекст из БД (история цены, срок на рынке, личная статистика по
-модели), формирует user-сообщение с учётом сезонности и отправляет его в
-Claude. Из ответа извлекаются DCB Score и вердикт.
-"""
+# analyzer.py — главный анализатор: синтез всех модулей + Groq API.
 
 import re
+import time
 import logging
 from datetime import datetime
 
-import anthropic
+from groq import Groq
 
-from config import load_config
-from database import price_dropped, days_on_market, get_model_stats
+from config import load_config, RUNTIME_CONFIG
+from database import (
+    price_dropped, days_on_market, get_model_stats, save_arbitrage,
+)
+from market_analyzer import analyze_market
+from seller_profiler import profile_seller
+from fraud_detector import detect_fraud
+from deal_strategist import build_strategy
+from arbitrage_detector import check_arbitrage
+from speed_monitor import calculate_listing_age_minutes, get_urgency_label
 
-# Путь к файлу системного промпта
 SYSTEM_PROMPT_PATH = "prompts/system.txt"
 
-# Названия месяцев для подстановки в сообщение
 MONTH_NAMES = [
     "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
     "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
 ]
 
 
-def _read_system_prompt():
-    """Прочитать системный промпт из файла, вернуть пустую строку при ошибке."""
+def _read_system_prompt() -> str:
+    """Прочитать системный промпт из файла."""
     try:
         with open(SYSTEM_PROMPT_PATH, encoding="utf-8") as f:
             return f.read()
@@ -35,94 +36,156 @@ def _read_system_prompt():
         return ""
 
 
-def _build_user_message(listing, days, dropped, drop_amount, model_stats, month_name):
+def _fmt(n) -> str:
+    """Форматировать число с пробелами (10 000 ₽)."""
+    try:
+        return f"{int(n):,}".replace(",", " ")
+    except Exception:
+        return str(n)
+
+
+def analyze_listing(listing: dict) -> dict:
     """
-    Собрать текст user-сообщения для Claude из данных объявления и контекста.
-
-    Добавляет блоки про срок на рынке, снижение цены и личную статистику,
-    только если соответствующие условия выполнены.
+    Главный анализатор объявления.
+    Синтезирует рыночный анализ, профиль продавца, детектор фрода,
+    стратегию сделки, арбитраж и Groq API (llama-3.3-70b-versatile).
+    Возвращает полный dict с dcb_score, verdict, full_analysis и всеми модулями.
     """
-    message = f"""Проанализируй объявление:
+    load_config()
 
-Название: {listing.get('title', '')}
-Цена: {listing.get('price', 0)} ₽
-Год: {listing.get('year', 0)}
-Пробег: {listing.get('mileage', 0)} км
-Город: {listing.get('city', '')}
-Описание: {listing.get('description', '')}
-Количество фото: {listing.get('photo_count', 0)}
-Объявлений у продавца: {listing.get('seller_ads_count', 0)}
+    listing_id = listing.get("listing_id", "")
+    source = listing.get("source", "")
 
-Текущий месяц: {month_name}. Учти сезонный коэффициент.
-"""
+    # ── Все аналитические модули ───────────────────────────────────────────
+    market = analyze_market(listing.get("title", ""), listing.get("price", 0))
+    seller = profile_seller(listing)
+    fraud = detect_fraud(listing)
+    strategy = build_strategy(listing, market, seller, fraud)
+    arbitrage = check_arbitrage(listing)
 
-    if days >= 7:
-        message += (
-            f"\nОбъявление на рынке уже {days} дней.\n"
-            "Продавец мотивирован. +10 к оценке потенциала торга.\n"
-        )
+    # Сохранить арбитражную возможность в БД
+    if arbitrage:
+        try:
+            save_arbitrage(
+                listing_id, source,
+                arbitrage.get("city", ""),
+                listing.get("listing_url", ""),
+                arbitrage["region_price"],
+                arbitrage["moscow_estimate"],
+                arbitrage["transport_cost"],
+                arbitrage["net_profit"],
+            )
+        except Exception as e:
+            logging.error(f"Ошибка сохранения арбитража: {e}")
 
-    if dropped:
-        message += (
-            f"\nЦена снижена на {drop_amount} ₽ с публикации.\n"
-            "Сигнал срочной продажи.\n"
-        )
-
-    if model_stats:
-        message += (
-            "\nЛичная статистика по данной модели:\n"
-            f"средняя прибыль {model_stats.get('avg_profit', 0)} ₽,\n"
-            f"средний срок продажи {model_stats.get('avg_days', 0)} дней.\n"
-            "Учти в прогнозе.\n"
-        )
-
-    return message
-
-
-def analyze_listing(listing):
-    """
-    Проанализировать одно объявление и вернуть результат с DCB Score.
-
-    Возвращает dict с полями dcb_score, verdict, full_analysis, listing,
-    price_dropped, drop_amount, days_on_market. При ошибке dcb_score = 0.
-    """
-    listing_id = listing.get("listing_id")
-    source = listing.get("source")
-
-    # Шаг 1. Контекст из БД
+    # ── Контекст из БД ────────────────────────────────────────────────────
     dropped, drop_amount = price_dropped(listing_id, source)
     days = days_on_market(listing_id, source)
     model_stats = get_model_stats(listing.get("title", ""))
 
-    # Шаг 2. Текущий месяц
+    # ── Возраст объявления и срочность ───────────────────────────────────
+    age_minutes = calculate_listing_age_minutes(listing.get("published_at", ""))
+    urgency_label = get_urgency_label(age_minutes)
+
+    price_val = listing.get("price") or 0
+    mileage_val = listing.get("mileage") or 0
+
+    # ── Предфильтр: цена выше рынка → не тратим Groq ─────────────────────
+    market_avg = market.get("market_avg", 0)
+    if market_avg > 0 and price_val >= market_avg:
+        logging.info(f"Пропущено (цена {price_val:,} >= рынок {market_avg:,}): {listing.get('title', '')}")
+        return {
+            "dcb_score": 0, "verdict": "Цена выше рынка — пропущено",
+            "full_analysis": "", "listing": listing, "market": market,
+            "seller": seller, "fraud": fraud, "strategy": strategy,
+            "arbitrage": arbitrage, "price_dropped": dropped,
+            "drop_amount": drop_amount, "days_on_market": days,
+            "age_minutes": age_minutes, "urgency_label": urgency_label,
+        }
+
+    # ── Текущий месяц для сезонности ─────────────────────────────────────
     month_name = MONTH_NAMES[datetime.now().month - 1]
 
-    # Шаг 3. user-сообщение
-    user_message = _build_user_message(
-        listing, days, dropped, drop_amount, model_stats, month_name
-    )
+    # ── Системный промпт ──────────────────────────────────────────────────
+    system_prompt = _read_system_prompt()
 
-    dcb_score = 0
-    verdict = ""
-    full_text = ""
+    # ── Формирование user-сообщения ───────────────────────────────────────
+    user_msg = f"""Источник: {source.upper()} | {urgency_label}
+Объявление: {listing.get('title', '')}
+Цена: {_fmt(price_val)} ₽ | Год: {listing.get('year', 0)} | Пробег: {_fmt(mileage_val)} км
+Город: {listing.get('city', '')} | Фото: {listing.get('photo_count', 0)}
+Описание: {str(listing.get('description', ''))[:500]}
 
-    # Шаг 4. Вызов Claude API
-    try:
-        cfg = load_config()
-        client = anthropic.Anthropic(api_key=cfg.get("CLAUDE_API_KEY", ""))
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1000,
-            system=_read_system_prompt(),
-            messages=[{"role": "user", "content": user_message}],
+РЫНОЧНЫЙ АНАЛИЗ:
+Средняя цена рынка: {_fmt(market['market_avg'])} ₽
+Минимум на рынке: {_fmt(market['market_min'])} ₽
+Аналогов на рынке: {market['market_count']}
+Недооценённость: {market['undervaluation_pct']}%
+Дешевле {market['price_percentile']}% аналогов
+Тренд рынка: {market['trend']}
+Ликвидность модели: {market['liquidity_days']} дней
+
+ПРОФИЛЬ ПРОДАВЦА:
+Мотивация: {seller['motivation_score']}/100
+Сигналы мотивации: {', '.join(seller['motivation_signals']) or 'не выявлены'}
+Вероятность перекупа: {seller['reseller_probability']}%
+Признаки перекупа: {', '.join(seller['reseller_signals']) or 'не выявлены'}
+Потенциал торга: {seller['bargain_potential']} ({seller['bargain_pct']}%)
+
+РИСКИ И ДЕФЕКТЫ:
+Уровень риска: {fraud['risk_level']} ({fraud['risk_score']}/100)
+Выявленные риски: {chr(10).join(fraud['risks']) if fraud['risks'] else 'серьёзных рисков не выявлено'}
+
+СТРАТЕГИЯ СДЕЛКИ:
+Открытие торга: {_fmt(strategy['opening_offer'])} ₽
+Целевая цена: {_fmt(strategy['target_price'])} ₽
+Красная линия: {_fmt(strategy['walk_away'])} ₽
+Лучшее время: {strategy['best_time']}
+Аргументы: {' | '.join(strategy['arguments'])}
+
+Текущий месяц: {month_name}"""
+
+    if dropped:
+        user_msg += f"\n\nЦЕНА СНИЖЕНА на {_fmt(drop_amount)} ₽ — сигнал срочности!"
+    if days >= 7:
+        user_msg += f"\n\nВисит {days} дней — продавец мотивирован"
+    if arbitrage:
+        user_msg += (
+            f"\n\nАРБИТРАЖ: регион {arbitrage['city']}, "
+            f"привезти за {_fmt(arbitrage['total_cost'])} ₽, "
+            f"продать в Москве за ~{_fmt(arbitrage['moscow_estimate'])} ₽, "
+            f"прибыль ~{_fmt(arbitrage['net_profit'])} ₽"
         )
-        full_text = response.content[0].text
-    except Exception as e:
-        logging.error(f"Ошибка вызова Claude API: {e}")
+    if model_stats and model_stats.get("avg_profit"):
+        user_msg += (
+            f"\n\nМОЯ СТАТИСТИКА по {listing.get('title', '')[:20]}: "
+            f"средняя прибыль {_fmt(model_stats['avg_profit'])} ₽, "
+            f"срок {model_stats['avg_days']} дней"
+        )
 
-    # Шаг 5. Парсинг ответа
+    # ── Вызов Groq API ────────────────────────────────────────────────────
+    full_text = ""
+    time.sleep(2)
     try:
-        score_match = re.search(r"DCB SCORE[:\s]+(\d+)", full_text)
+        client = Groq(api_key=RUNTIME_CONFIG.get("GROQ_API_KEY", ""))
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=1000,
+        )
+        full_text = response.choices[0].message.content or ""
+    except Exception as e:
+        logging.error(f"Groq error: {e}")
+        full_text = f"Ошибка анализа: {e}"
+
+    # ── Парсинг DCB Score и вердикта ──────────────────────────────────────
+    dcb_score = 0
+    verdict = "НЕТ ВЕРДИКТА"
+    try:
+        score_match = re.search(r"DCB SCORE[:\s*]*(\d+)", full_text, re.IGNORECASE)
         if score_match:
             dcb_score = int(score_match.group(1))
 
@@ -130,14 +193,37 @@ def analyze_listing(listing):
         if verdict_match:
             verdict = verdict_match.group(1).strip()
     except Exception as e:
-        logging.error(f"Ошибка парсинга ответа Claude: {e}")
+        logging.error(f"Ошибка парсинга ответа Groq: {e}")
+
+    # Groq вернул пустой ответ — считаем score локально чтобы не потерять объявление
+    if dcb_score == 0 and not full_text.strip():
+        underval = market.get("undervaluation_pct", 0)
+        fraud_penalty = fraud.get("risk_score", 0)
+        motivation_bonus = min(seller.get("motivation_score", 0) // 2, 20)
+        dcb_score = int(40 + underval * 0.8 + motivation_bonus - fraud_penalty * 0.4)
+        verdict = f"Локальная оценка (Groq недоступен): недооценка {underval}%, риск {fraud_penalty}/100"
+        logging.warning(f"Groq недоступен — локальный score: {dcb_score}/100 для {listing_id}")
+
+    # Штраф за перекупщика (применяется поверх оценки Groq)
+    if seller["reseller_probability"] >= 70:
+        dcb_score -= 15
+
+    # Финальная валидация — score всегда в диапазоне 0..100
+    dcb_score = max(0, min(100, dcb_score))
 
     return {
         "dcb_score": dcb_score,
         "verdict": verdict,
         "full_analysis": full_text,
         "listing": listing,
+        "market": market,
+        "seller": seller,
+        "fraud": fraud,
+        "strategy": strategy,
+        "arbitrage": arbitrage,
         "price_dropped": dropped,
         "drop_amount": drop_amount,
         "days_on_market": days,
+        "age_minutes": age_minutes,
+        "urgency_label": urgency_label,
     }

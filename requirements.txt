@@ -1,7 +1,14 @@
-anthropic
-python-telegram-bot>=20.0
+groq
+feedparser
+python-telegram-bot[socks]>=20.0
 apscheduler
 requests
 beautifulsoup4
 pyyaml
 lxml
+telethon
+fake-useragent
+playwright
+python-dotenv
+pytest
+curl_cffi>=0.6.0
