@@ -99,7 +99,7 @@ def _send_tg_message(text: str):
 
 
 async def fast_cycle():
-    """Быстрый цикл — Авито с интервальным контролем + детект разблокировки."""
+    """Быстрый цикл — Авито + Auto.ru (без Playwright, быстрые источники)."""
     if RUNTIME_CONFIG.get("PAUSED", False):
         return
 
@@ -120,6 +120,18 @@ async def fast_cycle():
                 logging.error(f"[FAST] avito: {e}")
         else:
             logging.debug("Авито: пропуск — слишком частые запросы")
+
+    # Auto.ru — curl_cffi без Playwright, работает быстро
+    if sources_cfg.get("autoru", True):
+        last_autoru = RUNTIME_CONFIG.get("LAST_AUTORU_FAST_PARSE", 0)
+        if time.time() - last_autoru >= 300:  # не чаще раза в 5 мин
+            try:
+                autoru_results = await asyncio.to_thread(autoru_parse)
+                RUNTIME_CONFIG["LAST_AUTORU_FAST_PARSE"] = time.time()
+                listings += autoru_results
+                logging.info(f"[FAST] autoru: {len(autoru_results)} новых")
+            except Exception as e:
+                logging.error(f"[FAST] autoru: {e}")
 
     # Уведомление о разблокировке
     was_blocked = RUNTIME_CONFIG.get("AVITO_WAS_BLOCKED", False)

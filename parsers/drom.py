@@ -169,7 +169,11 @@ def parse() -> list:
 
     try:
         with sync_playwright() as pw:
-            browser = pw.firefox.launch(headless=True)
+            # Chromium: Firefox не работает на путях с кириллицей (Windows)
+            browser = pw.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"],
+            )
             for i, url in enumerate(urls):
                 is_regional = i > 0
                 city_slug = url.split("drom.ru/")[1].split("/")[0]
