@@ -144,7 +144,7 @@ def init_db():
         conn.commit()
         _migrate_db(conn)
         conn.close()
-        logging.info("База данных v3.0 инициализирована")
+        logging.info("База данных v5.0 инициализирована")
     except Exception as e:
         logging.error(f"Ошибка init_db: {e}")
 

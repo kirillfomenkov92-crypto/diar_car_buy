@@ -114,6 +114,10 @@ def parse() -> list:
         logging.warning("Avito curl_cffi: 403 — IP временно заблокирован, пауза 15 мин")
         RUNTIME_CONFIG["AVITO_RSS_BLOCKED_UNTIL"] = time.time() + 900
         return []
+    if resp.status_code == 429:
+        logging.warning("Avito curl_cffi: 429 — слишком много запросов, пауза 20 мин")
+        RUNTIME_CONFIG["AVITO_RSS_BLOCKED_UNTIL"] = time.time() + 1200
+        return []
     if resp.status_code != 200:
         logging.warning(f"Avito curl_cffi: HTTP {resp.status_code}")
         return []

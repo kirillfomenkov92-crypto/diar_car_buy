@@ -101,8 +101,15 @@ def _parse_main() -> list:
 
     try:
         with sync_playwright() as pw:
-            browser = pw.firefox.launch(
+            # Chromium: Firefox не запускается на Windows с кириллицей в пути
+            # пользователя (spawn UNKNOWN). Chromium работает.
+            browser = pw.chromium.launch(
                 headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-dev-shm-usage",
+                ],
             )
             context = browser.new_context(
                 user_agent=random.choice(USER_AGENTS),

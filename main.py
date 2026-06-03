@@ -261,7 +261,7 @@ async def run():
     RUNTIME_CONFIG["_SCHEDULER"] = scheduler
     RUNTIME_CONFIG["_FAST_INTERVAL_CURRENT"] = fast_interval
     logging.info(
-        f"Diar Car Buy AI v3.0 запущен. "
+        f"Diar Car Buy AI v5.0 запущен. "
         f"Быстрый цикл: {fast_interval} мин | Полный цикл: {full_interval} мин"
     )
 

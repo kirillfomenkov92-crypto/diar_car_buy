@@ -48,7 +48,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/start — приветственное сообщение с описанием источников и команд."""
     try:
         text = (
-            "🚗 Diar Car Buy AI v3.0 запущен!\n"
+            "🚗 Diar Car Buy AI v5.0 запущен!\n"
             f"{LINE}\n"
             "📡 Источники мониторинга:\n"
             "  • Avito — каждые 15 минут\n"
@@ -397,7 +397,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/help — список всех команд."""
     try:
         text = (
-            f"📋 Команды Diar Car Buy AI v3.0\n"
+            f"📋 Команды Diar Car Buy AI v5.0\n"
             f"{LINE}\n"
             "/start — приветствие и описание\n"
             "/status — состояние Авито и бота\n"
