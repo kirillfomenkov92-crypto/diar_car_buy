@@ -11,8 +11,8 @@ from database import was_notified, score_changed, mark_notified
 MAX_MESSAGE_LEN = 4000
 
 
-def _send_part(token: str, chat_id: str, text: str, retries: int = 3):
-    """Отправить одну часть сообщения в Telegram с retry при сетевой ошибке."""
+def _send_part(token: str, chat_id: str, text: str, retries: int = 3) -> bool:
+    """Отправить одну часть сообщения одному chat_id. True если доставлено."""
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     for attempt in range(retries):
         try:
@@ -22,12 +22,24 @@ def _send_part(token: str, chat_id: str, text: str, retries: int = 3):
                 timeout=15,
             )
             resp.raise_for_status()
-            return
+            return True
         except Exception as e:
             if attempt == retries - 1:
-                logging.error(f"Telegram send failed after {retries} attempts: {e}")
+                logging.error(f"Telegram send {chat_id} failed after {retries} attempts: {e}")
             else:
                 time.sleep(2 ** attempt)
+    return False
+
+
+def _recipients() -> list:
+    """Список получателей уведомлений: ALLOWED_USER_IDS или TELEGRAM_CHAT_ID."""
+    ids = RUNTIME_CONFIG.get("ALLOWED_USER_IDS", [])
+    if isinstance(ids, (str, int)):
+        ids = [ids]
+    if not ids:
+        chat = RUNTIME_CONFIG.get("TELEGRAM_CHAT_ID", "")
+        ids = [chat] if chat else []
+    return ids
 
 
 def send_notification(result: dict):
@@ -94,22 +106,21 @@ def send_notification(result: dict):
                  for i in range(0, len(message), MAX_MESSAGE_LEN)]
 
         token = RUNTIME_CONFIG.get("TELEGRAM_BOT_TOKEN", "")
-        chat_id = RUNTIME_CONFIG.get("TELEGRAM_CHAT_ID", "")
+        recipients = _recipients()
 
-        if not token or not chat_id:
-            logging.error("Не задан TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID")
+        if not token or not recipients:
+            logging.error("Не задан TELEGRAM_BOT_TOKEN или список получателей")
             return
 
-        # Отправляем СНАЧАЛА, помечаем как уведомлённое только при успехе.
-        # Если два цикла пришли одновременно — первый пройдёт mark_notified,
-        # второй вернёт False и пропустит повторную отправку.
+        # Шлём всем админам. send_ok=True если доставлено хотя бы одному —
+        # помечаем как уведомлённое только при успешной доставке.
         send_ok = False
-        try:
-            for part in parts:
-                _send_part(token, chat_id, part)
-            send_ok = True
-        except Exception as send_err:
-            logging.error(f"Отправка не удалась для {listing_id}: {send_err}")
+        for chat_id in recipients:
+            delivered = all(_send_part(token, chat_id, part) for part in parts)
+            if delivered:
+                send_ok = True
+            else:
+                logging.warning(f"Доставка {chat_id} не удалась: {listing_id}")
 
         if not send_ok:
             logging.warning(f"Уведомление НЕ помечено (отправка провалилась): {listing_id}")
@@ -119,7 +130,10 @@ def send_notification(result: dict):
             logging.info(f"Пропуск {listing_id}: уже помечено другим циклом")
             return
 
-        logging.info(f"Уведомление отправлено: {listing_id} ({source}), score={dcb_score}")
+        logging.info(
+            f"Уведомление отправлено {len(recipients)} админам: "
+            f"{listing_id} ({source}), score={dcb_score}"
+        )
 
     except Exception as e:
         logging.error(f"Ошибка send_notification: {e}")

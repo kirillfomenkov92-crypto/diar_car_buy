@@ -43,6 +43,7 @@ def _fmt(n) -> str:
         return str(n)
 
 
+@authorized_only
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/start — приветственное сообщение с описанием источников и команд."""
     try:

@@ -50,6 +50,7 @@ def test_notifier_marks_on_success(monkeypatch):
 
     RUNTIME_CONFIG["TELEGRAM_BOT_TOKEN"] = "test_token"
     RUNTIME_CONFIG["TELEGRAM_CHAT_ID"] = "123"
+    RUNTIME_CONFIG["ALLOWED_USER_IDS"] = [123]  # один получатель
     RUNTIME_CONFIG["MAX_PRICE"] = 150000
 
     mark_called = []
@@ -58,7 +59,8 @@ def test_notifier_marks_on_success(monkeypatch):
     monkeypatch.setattr(notifier, "score_changed", lambda lid, src, s: True)
     monkeypatch.setattr(notifier, "mark_notified",
                         lambda lid, src, score: mark_called.append(1) or True)
-    monkeypatch.setattr(notifier, "_send_part", lambda token, chat, text, retries=3: None)
+    # _send_part теперь возвращает bool (True = доставлено)
+    monkeypatch.setattr(notifier, "_send_part", lambda token, chat, text, retries=3: True)
 
     result = {
         "listing": {"listing_id": "abc456", "source": "avito", "price": 90000},
