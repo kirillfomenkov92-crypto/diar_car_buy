@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-cd /d C:\Users\ян\diar_car_buy
+cd /d C:\diar_car_buy
 :loop
 echo [%date% %time%] Запуск Diar Car Buy AI...
 python main.py
