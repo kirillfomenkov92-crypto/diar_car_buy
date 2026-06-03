@@ -32,6 +32,7 @@ from parsers.tg_parser import parse as tg_parse
 async def _process_listings(listings: list, tag: str = ""):
     """Общая логика анализа и уведомлений для списка объявлений."""
     max_price = RUNTIME_CONFIG.get("MAX_PRICE", 150000)
+    target = RUNTIME_CONFIG.get("TARGET_MODELS", [])
     for listing in listings:
         try:
             if listing.get("price", 0) > max_price:
@@ -40,6 +41,13 @@ async def _process_listings(listings: list, tag: str = ""):
                     f"({listing.get('title', listing.get('listing_id'))})"
                 )
                 continue
+
+            # Фильтр целевых моделей — отсекаем нецелевой мусор
+            if target:
+                title_low = listing.get("title", "").lower()
+                if not any(m.lower() in title_low for m in target):
+                    logging.debug(f"Не целевая модель: {listing.get('title')}")
+                    continue
 
             lid = listing["listing_id"]
             src = listing["source"]

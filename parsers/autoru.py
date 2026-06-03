@@ -101,10 +101,16 @@ def _parse_from_json(html: str, max_price: int) -> list:
     sale_ids = [(m.group(1), m.start()) for m in re.finditer(r'"saleId":"([\d]+-[a-f\d]+)"', html)]
     logging.info(f"Auto.ru: найдено {len(sale_ids)} saleId в JSON")
 
-    # Глобальный индекс numeric_id → (mark, model) из всех URL страницы
-    url_index: dict[str, tuple[str, str]] = {}
-    for um in re.finditer(r'auto\.ru/cars/used/sale/([a-z0-9_]+)/([a-z0-9_]+)/(\d{7,})', html):
-        url_index[um.group(3)] = (um.group(1), um.group(2))
+    # Глобальный индекс numeric_id → (mark, model, полный рабочий href).
+    # Реальный href содержит полный saleId с хешем (1132859985-aec39aa9),
+    # числовой URL без хеша даёт 404 — поэтому сохраняем href целиком.
+    url_index: dict[str, tuple[str, str, str]] = {}
+    for um in re.finditer(
+        r'(https://auto\.ru/cars/used/sale/([a-z0-9_]+)/([a-z0-9_]+)/(\d{7,})-[a-f0-9]+/?)',
+        html,
+    ):
+        full_url, mark_slug, model_slug, num_id = um.group(1), um.group(2), um.group(3), um.group(4)
+        url_index[num_id] = (mark_slug, model_slug, full_url.rstrip("/") + "/")
 
     results = []
     seen_ids = set()
@@ -132,13 +138,11 @@ def _parse_from_json(html: str, max_price: int) -> list:
 
             numeric_id = sid.split("-")[0]
             mileage = int(km_m.group(1)) if km_m else 0
-            mark_slug, model_slug = url_index.get(numeric_id, ("", ""))
+            mark_slug, model_slug, full_url = url_index.get(numeric_id, ("", "", ""))
             mark  = mark_slug.replace("_", " ").title()
             model = model_slug.replace("_", " ").title()
-            listing_url = (
-                f"https://auto.ru/cars/used/sale/{mark_slug}/{model_slug}/{numeric_id}/"
-                if mark_slug else f"https://auto.ru/cars/used/sale/{sid}/"
-            )
+            # Используем реальный href со страницы (с полным saleId и хешем)
+            listing_url = full_url or f"https://auto.ru/cars/used/sale/{sid}/"
             title = f"{mark} {model}, {year}".strip(" ,") if (mark or model) else str(year)
 
             results.append({
