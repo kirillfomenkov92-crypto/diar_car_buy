@@ -727,3 +727,24 @@ def get_source_stats() -> dict:
     except Exception as e:
         logging.error(f"Ошибка get_source_stats: {e}")
         return {"best": "—"}
+
+
+def is_duplicate_listing(title: str, price: int, year: int, exclude_source: str) -> bool:
+    """True если за последние сутки уже было похожее объявление с ДРУГОГО источника.
+    Похожее = цена ±5% + год в заголовке + другой источник."""
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT COUNT(*) FROM seen_listings
+            WHERE source != ?
+              AND last_price BETWEEN ? AND ?
+              AND title LIKE ?
+              AND first_seen > datetime('now', '-1 day')
+        """, (exclude_source, int(price * 0.95), int(price * 1.05), f"%{year}%"))
+        count = cur.fetchone()[0]
+        conn.close()
+        return count > 0
+    except Exception as e:
+        logging.error(f"Ошибка is_duplicate_listing: {e}")
+        return False

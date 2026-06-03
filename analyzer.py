@@ -5,6 +5,7 @@ import time
 import logging
 from datetime import datetime
 
+import requests
 from groq import Groq
 
 from config import load_config, RUNTIME_CONFIG
@@ -34,6 +35,27 @@ def _read_system_prompt() -> str:
     except Exception as e:
         logging.error(f"Ошибка чтения системного промпта: {e}")
         return ""
+
+
+def _notify_groq_down():
+    """Уведомить админов один раз о 10 ошибках Groq подряд."""
+    token = RUNTIME_CONFIG.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = RUNTIME_CONFIG.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        return
+    text = (
+        "⚠️ Groq не отвечает 10 раз подряд — возможно лимит ключа исчерпан.\n"
+        "Бот использует локальный анализ."
+    )
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text},
+            timeout=10,
+        )
+        logging.warning("Groq down: уведомление отправлено админам")
+    except Exception as e:
+        logging.error(f"Не удалось отправить уведомление о Groq: {e}")
 
 
 def _fmt(n) -> str:
@@ -177,9 +199,14 @@ def analyze_listing(listing: dict) -> dict:
             max_tokens=1000,
         )
         full_text = response.choices[0].message.content or ""
+        RUNTIME_CONFIG["GROQ_FAIL_STREAK"] = 0  # успех — сброс счётчика
     except Exception as e:
         logging.error(f"Groq error: {e}")
         full_text = f"Ошибка анализа: {e}"
+        streak = RUNTIME_CONFIG.get("GROQ_FAIL_STREAK", 0) + 1
+        RUNTIME_CONFIG["GROQ_FAIL_STREAK"] = streak
+        if streak == 10:
+            _notify_groq_down()
 
     # ── Парсинг DCB Score и вердикта ──────────────────────────────────────
     dcb_score = 0

@@ -15,11 +15,13 @@ from config import load_config, RUNTIME_CONFIG
 from database import (
     init_db, mark_seen, was_notified, price_dropped,
     increment_analyzed, increment_notified, record_response_time,
+    is_duplicate_listing,
 )
 from analyzer import analyze_listing
 from notifier import send_notification
 from bot_commands import get_command_handlers
 from speed_monitor import calculate_listing_age_minutes
+from utils.watchdog import record_heartbeat, health_check
 
 from parsers.avito import parse as avito_parse
 from parsers.drom import parse as drom_parse
@@ -69,6 +71,16 @@ async def _process_listings(listings: list, tag: str = ""):
             min_score = RUNTIME_CONFIG.get("MIN_DCB_SCORE", 80)
 
             if result["dcb_score"] >= min_score:
+                # Антидубль: то же авто с другого источника за последние сутки
+                if is_duplicate_listing(
+                    listing.get("title", ""), listing.get("price", 0),
+                    listing.get("year", 0), src,
+                ):
+                    logging.info(
+                        f"{tag} дубль с другого источника: {listing.get('title')} | {src}"
+                    )
+                    continue
+
                 await asyncio.to_thread(send_notification, result)
                 increment_notified(result["dcb_score"])
                 age = result.get("age_minutes", 999)
@@ -169,6 +181,7 @@ async def fast_cycle():
     ]
     logging.info(f"[FAST] Свежих (до 30 мин): {len(fresh)} из {len(listings)}")
 
+    record_heartbeat()
     await _process_listings(fresh, tag="[FAST]")
 
 
@@ -240,6 +253,10 @@ async def run():
         monitor_cycle, "interval", minutes=full_interval,
         max_instances=1, misfire_grace_time=120,
     )
+    scheduler.add_job(
+        lambda: health_check(), "interval", minutes=10,
+        max_instances=1, misfire_grace_time=60,
+    )
     scheduler.start()
     RUNTIME_CONFIG["_SCHEDULER"] = scheduler
     RUNTIME_CONFIG["_FAST_INTERVAL_CURRENT"] = fast_interval
@@ -282,7 +299,10 @@ def main():
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     token_filter = _TokenFilter()
 
-    file_handler = logging.FileHandler("agent.log", encoding="utf-8")
+    from logging.handlers import RotatingFileHandler
+    file_handler = RotatingFileHandler(
+        "agent.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(fmt)
     file_handler.addFilter(token_filter)
@@ -298,8 +318,27 @@ def main():
     root.addHandler(file_handler)
     root.addHandler(console_handler)
 
-    init_db()
-    asyncio.run(run())
+    # Проверки старта с понятными сообщениями вместо молчаливого exit 1
+    if not _cfg:
+        logging.critical("СТАРТ: config.yaml пуст или не читается — проверь файл")
+        sys.exit(1)
+    if not _token:
+        logging.critical("СТАРТ: TELEGRAM_BOT_TOKEN не задан в config.yaml")
+        sys.exit(1)
+
+    try:
+        init_db()
+    except Exception as e:
+        logging.critical(f"СТАРТ: БД недоступна ({e}) — проверь diar_car_buy.db")
+        sys.exit(1)
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        logging.info("Остановлено пользователем (Ctrl+C)")
+    except Exception as e:
+        logging.critical(f"СТАРТ: бот упал при запуске: {e}", exc_info=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
