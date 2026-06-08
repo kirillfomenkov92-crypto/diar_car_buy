@@ -87,7 +87,7 @@ def test_analyzer_empty_market_no_crash(tmp_path, monkeypatch):
     import analyzer
     from config import RUNTIME_CONFIG
 
-    RUNTIME_CONFIG["GROQ_API_KEY"] = "test"
+    RUNTIME_CONFIG["DEEPSEEK_API_KEY"] = "test"
     RUNTIME_CONFIG["MAX_PRICE"] = 150000
 
     monkeypatch.setattr(analyzer, "analyze_market", lambda title, price: {})
@@ -111,15 +111,15 @@ def test_analyzer_empty_market_no_crash(tmp_path, monkeypatch):
     monkeypatch.setattr(analyzer, "calculate_listing_age_minutes", lambda pub: 999)
     monkeypatch.setattr(analyzer, "get_urgency_label", lambda age: "⏱ нейтрально")
 
-    # Groq бросает исключение → должен сработать fallback
-    class FakeGroq:
-        def __init__(self, api_key): pass
+    # DeepSeek бросает исключение → должен сработать fallback
+    class FakeDeepSeek:
+        def __init__(self, api_key, base_url=None): pass
         class chat:
             class completions:
                 @staticmethod
                 def create(**kwargs):
-                    raise Exception("Groq недоступен")
-    monkeypatch.setattr(analyzer, "Groq", FakeGroq)
+                    raise Exception("DeepSeek недоступен")
+    monkeypatch.setattr(analyzer, "OpenAI", FakeDeepSeek)
 
     listing = {
         "listing_id": "test_empty_market",
@@ -144,15 +144,15 @@ def test_analyzer_empty_market_no_crash(tmp_path, monkeypatch):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# BUG 3: analyzer.py — Groq fallback срабатывает при строке "Ошибка анализа"
+# BUG 3: analyzer.py — DeepSeek fallback срабатывает при строке "Ошибка анализа"
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_groq_fallback_on_error_string(monkeypatch):
-    """analyzer: локальный fallback score считается когда Groq бросил исключение."""
+def test_deepseek_fallback_on_error_string(monkeypatch):
+    """analyzer: локальный fallback score считается когда DeepSeek бросил исключение."""
     import analyzer
     from config import RUNTIME_CONFIG
 
-    RUNTIME_CONFIG["GROQ_API_KEY"] = "test"
+    RUNTIME_CONFIG["DEEPSEEK_API_KEY"] = "test"
     RUNTIME_CONFIG["MAX_PRICE"] = 150000
 
     monkeypatch.setattr(analyzer, "analyze_market", lambda title, price: {
@@ -180,14 +180,14 @@ def test_groq_fallback_on_error_string(monkeypatch):
     monkeypatch.setattr(analyzer, "calculate_listing_age_minutes", lambda pub: 15)
     monkeypatch.setattr(analyzer, "get_urgency_label", lambda age: "🔥 срочно")
 
-    class FakeGroq:
-        def __init__(self, api_key): pass
+    class FakeDeepSeek:
+        def __init__(self, api_key, base_url=None): pass
         class chat:
             class completions:
                 @staticmethod
                 def create(**kwargs):
                     raise ConnectionError("timeout")
-    monkeypatch.setattr(analyzer, "Groq", FakeGroq)
+    monkeypatch.setattr(analyzer, "OpenAI", FakeDeepSeek)
 
     listing = {
         "listing_id": "fallback_test",

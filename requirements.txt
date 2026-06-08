@@ -1,4 +1,4 @@
-groq
+openai>=1.0.0
 feedparser
 python-telegram-bot[socks]>=20.0
 apscheduler

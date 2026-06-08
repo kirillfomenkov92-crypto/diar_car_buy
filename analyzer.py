@@ -1,4 +1,4 @@
-# analyzer.py — главный анализатор: синтез всех модулей + Groq API.
+# analyzer.py — главный анализатор: синтез всех модулей + DeepSeek API.
 
 import re
 import time
@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 
 import requests
-from groq import Groq
+from openai import OpenAI
 
 from config import load_config, RUNTIME_CONFIG
 from database import (
@@ -37,14 +37,14 @@ def _read_system_prompt() -> str:
         return ""
 
 
-def _notify_groq_down():
-    """Уведомить админов один раз о 10 ошибках Groq подряд."""
+def _notify_llm_down():
+    """Уведомить админов один раз о 10 ошибках DeepSeek подряд."""
     token = RUNTIME_CONFIG.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = RUNTIME_CONFIG.get("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
         return
     text = (
-        "⚠️ Groq не отвечает 10 раз подряд — возможно лимит ключа исчерпан.\n"
+        "⚠️ DeepSeek не отвечает 10 раз подряд — возможно лимит ключа исчерпан.\n"
         "Бот использует локальный анализ."
     )
     try:
@@ -53,9 +53,9 @@ def _notify_groq_down():
             json={"chat_id": chat_id, "text": text},
             timeout=10,
         )
-        logging.warning("Groq down: уведомление отправлено админам")
+        logging.warning("DeepSeek down: уведомление отправлено админам")
     except Exception as e:
-        logging.error(f"Не удалось отправить уведомление о Groq: {e}")
+        logging.error(f"Не удалось отправить уведомление о DeepSeek: {e}")
 
 
 def _fmt(n) -> str:
@@ -70,7 +70,7 @@ def analyze_listing(listing: dict) -> dict:
     """
     Главный анализатор объявления.
     Синтезирует рыночный анализ, профиль продавца, детектор фрода,
-    стратегию сделки, арбитраж и Groq API (llama-3.3-70b-versatile).
+    стратегию сделки, арбитраж и DeepSeek API (deepseek-chat).
     Возвращает полный dict с dcb_score, verdict, full_analysis и всеми модулями.
     """
     load_config()
@@ -185,13 +185,16 @@ def analyze_listing(listing: dict) -> dict:
             f"срок {model_stats['avg_days']} дней"
         )
 
-    # ── Вызов Groq API ────────────────────────────────────────────────────
+    # ── Вызов DeepSeek API ────────────────────────────────────────────────
     full_text = ""
     time.sleep(2)
     try:
-        client = Groq(api_key=RUNTIME_CONFIG.get("GROQ_API_KEY", ""))
+        client = OpenAI(
+            api_key=RUNTIME_CONFIG.get("DEEPSEEK_API_KEY", ""),
+            base_url="https://api.deepseek.com",
+        )
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="deepseek-chat",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_msg},
@@ -199,14 +202,14 @@ def analyze_listing(listing: dict) -> dict:
             max_tokens=1000,
         )
         full_text = response.choices[0].message.content or ""
-        RUNTIME_CONFIG["GROQ_FAIL_STREAK"] = 0  # успех — сброс счётчика
+        RUNTIME_CONFIG["LLM_FAIL_STREAK"] = 0  # успех — сброс счётчика
     except Exception as e:
-        logging.error(f"Groq error: {e}")
+        logging.error(f"DeepSeek error: {e}")
         full_text = f"Ошибка анализа: {e}"
-        streak = RUNTIME_CONFIG.get("GROQ_FAIL_STREAK", 0) + 1
-        RUNTIME_CONFIG["GROQ_FAIL_STREAK"] = streak
+        streak = RUNTIME_CONFIG.get("LLM_FAIL_STREAK", 0) + 1
+        RUNTIME_CONFIG["LLM_FAIL_STREAK"] = streak
         if streak == 10:
-            _notify_groq_down()
+            _notify_llm_down()
 
     # ── Парсинг DCB Score и вердикта ──────────────────────────────────────
     dcb_score = 0
@@ -220,18 +223,18 @@ def analyze_listing(listing: dict) -> dict:
         if verdict_match:
             verdict = verdict_match.group(1).strip()
     except Exception as e:
-        logging.error(f"Ошибка парсинга ответа Groq: {e}")
+        logging.error(f"Ошибка парсинга ответа DeepSeek: {e}")
 
-    # Groq вернул пустой ответ — считаем score локально чтобы не потерять объявление
+    # DeepSeek вернул пустой ответ — считаем score локально чтобы не потерять объявление
     if dcb_score == 0 and (not full_text.strip() or full_text.startswith("Ошибка")):
         underval = market.get("undervaluation_pct", 0)
         fraud_penalty = fraud.get("risk_score", 0)
         motivation_bonus = min(seller.get("motivation_score", 0) // 2, 20)
         dcb_score = int(40 + underval * 0.8 + motivation_bonus - fraud_penalty * 0.4)
-        verdict = f"Локальная оценка (Groq недоступен): недооценка {underval}%, риск {fraud_penalty}/100"
-        logging.warning(f"Groq недоступен — локальный score: {dcb_score}/100 для {listing_id}")
+        verdict = f"Локальная оценка (DeepSeek недоступен): недооценка {underval}%, риск {fraud_penalty}/100"
+        logging.warning(f"DeepSeek недоступен — локальный score: {dcb_score}/100 для {listing_id}")
 
-    # Штраф за перекупщика (применяется поверх оценки Groq)
+    # Штраф за перекупщика (применяется поверх оценки DeepSeek)
     if seller["reseller_probability"] >= 70:
         dcb_score -= 15
 
