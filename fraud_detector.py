@@ -1,6 +1,7 @@
 # fraud_detector.py — детектор скрытых проблем и мошенничества.
 
 import logging
+from datetime import datetime
 
 # Паттерны скрытых дефектов: ключевая фраза → (реальная проблема, вес риска)
 DEFECT_PATTERNS = {
@@ -74,7 +75,7 @@ def detect_fraud(listing: dict) -> dict:
                 risk_score += weight
 
         # Аномальный пробег
-        age = max(2026 - year, 1) if year > 2000 else 10
+        age = max(datetime.now().year - year, 1) if year > 2000 else 10
         if mileage > 0:
             if mileage < age * 4000:
                 risks.append(

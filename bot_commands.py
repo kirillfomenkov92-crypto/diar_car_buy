@@ -56,7 +56,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🚗 Diar Car Buy AI v5.0 запущен!\n"
             f"{LINE}\n"
             "📡 Источники мониторинга:\n"
-            "  • Avito — каждые 15 минут\n"
+            f"  • Avito — каждые {RUNTIME_CONFIG.get('FAST_CHECK_INTERVAL', 20)} минут\n"
             "  • Drom — Москва + регионы (арбитраж)\n"
             "  • Auto.ru — только частные\n"
             "  • Youla — меньше конкуренции\n"
