@@ -800,6 +800,101 @@ def get_source_stats() -> dict:
         return {"best": "—"}
 
 
+def search_listings(brand: str = None, max_price: int = None,
+                    country: str = None, min_score: int = 0, limit: int = 5) -> list:
+    """Поиск объявлений из seen_listings по марке/стране/цене/score."""
+    DOMESTIC = {"lada", "vaz", "газ", "уаз", "ваз", "нива", "kalina", "granta", "vesta"}
+    try:
+        conn = _connect()
+        conn.row_factory = sqlite3.Row
+        clauses = ["last_dcb_score >= ?"]
+        params: list = [min_score]
+        if max_price:
+            clauses.append("last_price <= ?")
+            params.append(max_price)
+        if brand and brand != "any":
+            clauses.append("LOWER(title) LIKE ?")
+            params.append(f"%{brand.lower()}%")
+        if country == "domestic":
+            brand_filters = " OR ".join("LOWER(title) LIKE ?" for _ in DOMESTIC)
+            clauses.append(f"({brand_filters})")
+            params.extend(f"%{b}%" for b in DOMESTIC)
+        elif country == "foreign":
+            brand_filters = " AND ".join("LOWER(title) NOT LIKE ?" for _ in DOMESTIC)
+            clauses.append(f"({brand_filters})")
+            params.extend(f"%{b}%" for b in DOMESTIC)
+        where = " AND ".join(clauses)
+        params.append(limit)
+        rows = conn.execute(
+            f"SELECT * FROM seen_listings WHERE {where} ORDER BY last_dcb_score DESC LIMIT ?",
+            params,
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.error(f"search_listings: {e}")
+        return []
+
+
+def get_recent_listings(minutes: int = 60, min_score: int = 0, limit: int = 5) -> list:
+    """Объявления, впервые замеченные за последние `minutes` минут."""
+    try:
+        conn = _connect()
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """SELECT * FROM seen_listings
+               WHERE first_seen > datetime('now', ?)
+                 AND last_dcb_score >= ?
+               ORDER BY first_seen DESC LIMIT ?""",
+            (f"-{minutes} minutes", min_score, limit),
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logging.error(f"get_recent_listings: {e}")
+        return []
+
+
+def get_listing(listing_id: str) -> dict | None:
+    """Получить одно объявление из seen_listings по listing_id."""
+    try:
+        conn = _connect()
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM seen_listings WHERE listing_id = ? LIMIT 1", (listing_id,)
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+    except Exception as e:
+        logging.error(f"get_listing: {e}")
+        return None
+
+
+def add_favorite(user_id: int, listing_id: str) -> bool:
+    """Добавить объявление в избранное. Возвращает True если добавлено, False если уже есть."""
+    try:
+        conn = _connect()
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS favorites (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               user_id INTEGER, listing_id TEXT,
+               added_at TEXT DEFAULT CURRENT_TIMESTAMP,
+               UNIQUE(user_id, listing_id))"""
+        )
+        conn.commit()
+        conn.execute(
+            "INSERT OR IGNORE INTO favorites(user_id, listing_id) VALUES(?,?)",
+            (user_id, listing_id),
+        )
+        added = conn.total_changes > 0
+        conn.commit()
+        conn.close()
+        return added
+    except Exception as e:
+        logging.error(f"add_favorite: {e}")
+        return False
+
+
 def is_duplicate_listing(title: str, price: int, year: int, exclude_source: str) -> bool:
     """True если за последние сутки уже было похожее объявление с ДРУГОГО источника.
     Похожее = цена ±5% + год в заголовке + другой источник."""

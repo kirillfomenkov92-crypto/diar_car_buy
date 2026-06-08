@@ -12,14 +12,19 @@ from telegram.ext import ContextTypes
 from config import load_config, set_value, RUNTIME_CONFIG
 
 
+def _is_authorized(uid: int) -> bool:
+    """Проверить, разрешён ли доступ пользователю."""
+    allowed = RUNTIME_CONFIG.get("ALLOWED_USER_IDS", [])
+    return not allowed or uid in allowed
+
+
 def authorized_only(func):
     @wraps(func)
     async def wrapper(update, context):
         if not update.effective_user:
             return
         uid = update.effective_user.id
-        allowed = RUNTIME_CONFIG.get("ALLOWED_USER_IDS", [])
-        if allowed and uid not in allowed:
+        if not _is_authorized(uid):
             await update.message.reply_text("Доступ запрещён")
             logging.warning(f"Попытка доступа: user_id={uid}")
             return
