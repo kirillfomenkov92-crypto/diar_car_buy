@@ -53,10 +53,13 @@ def parse() -> list:
     headers = get_random_headers(referer="https://auto.ru/")
     url = f"https://auto.ru/moskva/cars/used/?price_to={max_price}&seller_group=PRIVATE"
 
+    from utils.proxy import curl_proxies
+    proxies = curl_proxies()
+
     time.sleep(random.uniform(3, 7))
 
     try:
-        response = session.get(url, headers=headers, timeout=60)
+        response = session.get(url, headers=headers, timeout=60, proxies=proxies)
     except Exception as e:
         logging.error(f"Auto.ru запрос: {e}")
         return []
@@ -94,6 +97,47 @@ def parse() -> list:
         RUNTIME_CONFIG["AUTORU_EMPTY_CYCLES"] = 0
 
     return results
+
+
+def _pick_photo_size(sizes: dict) -> str:
+    """Выбрать URL крупного размера фото для анализа (WxH с макс. площадью)."""
+    wh = {}
+    for s in sizes:
+        m = re.fullmatch(r"(\d+)x(\d+)", s)
+        if m:
+            wh[s] = int(m.group(1)) * int(m.group(2))
+    if wh:
+        return sizes[max(wh, key=wh.get)]
+    for pref in ("full", "orig"):
+        if pref in sizes:
+            return sizes[pref]
+    return next(iter(sizes.values()))
+
+
+def _extract_autoru_photos(html: str, pos: int, limit: int = 5) -> list:
+    """Извлечь ссылки на реальные фото продавца из image_urls оффера Auto.ru.
+
+    Блок "image_urls":[{...}] идёт сразу после saleId (~+840 симв). Реальные
+    снимки — get-autoru-vos (get-verba = стоковые каталожные картинки, мусор).
+    На каждое фото берём один URL крупного размера.
+    """
+    block_start = html.find('"image_urls":[', pos, pos + 4000)
+    if block_start < 0:
+        return []
+    arr_start = block_start + len('"image_urls":')
+    end = html.find("]", arr_start)
+    block = html[arr_start:end + 1] if end > 0 else html[arr_start:arr_start + 8000]
+
+    photos: dict = {}  # (id, hash) -> {size: url} — сохраняет порядок фото
+    for m in re.finditer(
+        r"//avatars\.mds\.yandex\.net/get-autoru-vos/(\d+)/([a-f0-9]+)/(\w+)",
+        block,
+    ):
+        key = (m.group(1), m.group(2))
+        photos.setdefault(key, {})[m.group(3)] = "https:" + m.group(0)
+
+    urls = [_pick_photo_size(sizes) for sizes in photos.values()]
+    return urls[:limit]
 
 
 def _parse_from_json(html: str, max_price: int) -> list:
@@ -145,6 +189,8 @@ def _parse_from_json(html: str, max_price: int) -> list:
             listing_url = full_url or f"https://auto.ru/cars/used/sale/{sid}/"
             title = f"{mark} {model}, {year}".strip(" ,") if (mark or model) else str(year)
 
+            photo_urls = _extract_autoru_photos(html, pos)
+
             results.append({
                 "listing_id":       sid,
                 "source":           SOURCE,
@@ -154,8 +200,8 @@ def _parse_from_json(html: str, max_price: int) -> list:
                 "mileage":          mileage,
                 "city":             "Москва",
                 "description":      title,
-                "photo_count":      0,
-                "photo_urls":       [],
+                "photo_count":      len(photo_urls),
+                "photo_urls":       photo_urls,
                 "seller_ads_count": 0,
                 "seller_id":        "",
                 "published_at":     "",

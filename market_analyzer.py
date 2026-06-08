@@ -3,7 +3,11 @@
 import logging
 from datetime import datetime, timedelta
 
-from database import get_similar_from_db
+from database import get_similar_from_db, _model_keywords
+
+# Минимум сопоставимых объявлений, при котором рыночной оценке можно доверять.
+# Меньше — считаем недооценку неопределённой (0), чтобы не раздувать Score.
+MIN_MARKET_SAMPLE = 3
 
 # Ликвидность по дням продажи для типовых моделей
 LIQUIDITY_MAP = {
@@ -40,11 +44,12 @@ def get_market_trend(model: str) -> str:
         cur = conn.cursor()
         week_ago = (datetime.now() - timedelta(days=7)).isoformat()
         month_ago = (datetime.now() - timedelta(days=30)).isoformat()
-        keywords = (model or "").lower().split()[:2]
+        keywords = _model_keywords(model)
         if not keywords:
             return "нет данных"
-        conditions = " OR ".join(
-            f"LOWER(title) LIKE '%' || LOWER(?) || '%'" for _ in keywords
+        # AND: тренд считаем по той же модели, а не по всей марке
+        conditions = " AND ".join(
+            "LOWER(title) LIKE '%' || LOWER(?) || '%'" for _ in keywords
         )
         cur.execute(
             f"SELECT AVG(last_price) AS a FROM seen_listings WHERE first_seen>=? AND ({conditions})",
@@ -88,14 +93,25 @@ def analyze_market(model: str, current_price: int, city: str = "Москва") -
             }
 
         prices = [s["last_price"] for s in similar if s.get("last_price")]
-        if not prices:
+
+        # Отсев выбросов: даже при совпадении модели в выборку попадают
+        # ошибочные/иномодельные цены (битый парсинг, дорогие версии). Берём
+        # только сопоставимые с текущей ценой (0.4x–2.5x) — это убирает 1.3 млн
+        # в «рынке» машины за 120к.
+        if current_price > 0:
+            prices = [p for p in prices
+                      if current_price * 0.4 <= p <= current_price * 2.5]
+
+        # Мало данных → рыночной оценке доверять нельзя: возвращаем недооценку 0,
+        # чтобы Score не раздувался на ложной «выгоде».
+        if len(prices) < MIN_MARKET_SAMPLE:
             return {
                 "market_avg": current_price,
-                "market_min": current_price,
-                "market_count": 0,
+                "market_min": min(prices) if prices else current_price,
+                "market_count": len(prices),
                 "price_percentile": 50,
                 "undervaluation_pct": 0,
-                "trend": "нет данных",
+                "trend": "мало данных",
                 "liquidity_days": estimate_liquidity_default(model),
             }
 

@@ -9,6 +9,41 @@ from datetime import datetime, timedelta
 
 DB_PATH = "diar_car_buy.db"
 
+import re as _re
+
+# Год выпуска (1990–2029) — такие токены НЕ являются признаком модели и должны
+# отбрасываться при построении ключевых слов. Номера моделей Lada (2104–21099)
+# все > 2029, поэтому с годами не путаются и сохраняются.
+_YEAR_TOKEN_RE = _re.compile(r"^(199\d|20[0-2]\d)$")
+# Шум: тип КПП, объём и прочее — не помогает идентифицировать модель.
+_MODEL_NOISE = {"mt", "at", "cvt", "amt", "акпп", "мкпп", "вариатор", "седан",
+                "хэтчбек", "хетчбек", "универсал", "lada"}
+
+
+def _model_keywords(model: str, limit: int = 2) -> list:
+    """Ключевые слова модели для поиска ИМЕННО этой модели (бренд + модель).
+
+    Раньше поиск шёл по первым двум словам через OR — «Lada Priora» подтягивал
+    все «лады», а «Ford Focus» — Fusion/Sierra/Galaxy, что ломало market_avg.
+    Здесь: чистим пунктуацию, выбрасываем год выпуска и шум, приоритетно
+    включаем номер-модель (2110, 2107) — он точнее всего идентифицирует Lada.
+    """
+    if not model:
+        return []
+    cleaned = _re.sub(r"[^0-9a-zA-Zа-яёА-ЯЁ]+", " ", model.lower())
+    meaningful = [
+        t for t in cleaned.split()
+        if len(t) >= 2 and not _YEAR_TOKEN_RE.match(t) and t not in _MODEL_NOISE
+    ]
+    if not meaningful:
+        return []
+    keywords = meaningful[:limit]
+    # Номер-модель (4–5 цифр) идентифицирует машину точнее марки — гарантируем его
+    nums = [t for t in meaningful if t.isdigit() and len(t) >= 4]
+    if nums and nums[0] not in keywords:
+        keywords = ([keywords[0], nums[0]] if keywords else [nums[0]])
+    return keywords
+
 
 def _connect():
     """Открыть соединение с WAL-режимом и таймаутом для конкурентного доступа."""
@@ -350,9 +385,14 @@ def get_similar_from_db(model: str, days: int = 30) -> list:
         conn = _connect()
         cur = conn.cursor()
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
-        keywords = model.lower().split()[:2]
-        conditions = " OR ".join(
-            f"LOWER(title) LIKE '%' || LOWER(?) || '%'" for _ in keywords
+        keywords = _model_keywords(model)
+        if not keywords:
+            conn.close()
+            return []
+        # AND, а не OR: нужны объявления ИМЕННО этой модели, иначе средняя
+        # цена «рынка» загрязняется чужими марками и недооценка врёт.
+        conditions = " AND ".join(
+            "LOWER(title) LIKE '%' || LOWER(?) || '%'" for _ in keywords
         )
         params = keywords + [cutoff]
         cur.execute(
@@ -626,6 +666,37 @@ def get_top5_today() -> list:
                 for r in rows]
     except Exception as e:
         logging.error(f"Ошибка get_top5_today: {e}")
+        return []
+
+
+def get_today_analyzed(limit: int = 20) -> list:
+    """ВСЕ проанализированные за сегодня объявления (score > 0), не только топ-5."""
+    try:
+        today = _today()
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT listing_id, source, title, last_price, listing_url,
+                   last_dcb_score, first_seen
+            FROM seen_listings
+            WHERE date(first_seen)=?
+              AND last_dcb_score > 0
+              AND source != 'test'
+            ORDER BY last_dcb_score DESC
+            LIMIT ?
+        """, (today, limit))
+        rows = cur.fetchall()
+        conn.close()
+        return [{"listing_id": r["listing_id"] or "",
+                 "source": r["source"] or "",
+                 "title": r["title"] or f"[{r['source']}]",
+                 "price": r["last_price"] or 0,
+                 "url": r["listing_url"] or "",
+                 "score": r["last_dcb_score"] or 0,
+                 "first_seen": r["first_seen"] or ""}
+                for r in rows]
+    except Exception as e:
+        logging.error(f"Ошибка get_today_analyzed: {e}")
         return []
 
 

@@ -31,16 +31,52 @@ from parsers.vk_parser import parse as vk_parse
 from parsers.tg_parser import parse as tg_parse
 
 
-async def _process_listings(listings: list, tag: str = ""):
+
+def _remember_listings(listings: list):
+    """Записать ВСЕ найденные объявления в seen_listings до фильтров."""
+    for l in listings:
+        try:
+            lid = l.get("listing_id")
+            if not lid:
+                continue
+            mark_seen(
+                lid, l.get("source", ""), l.get("price", 0),
+                l.get("title", ""), l.get("listing_url", ""),
+            )
+        except Exception as e:
+            logging.debug(f"remember {l.get('listing_id')}: {e}")
+
+
+def _city_allowed(city: str, allowed: list) -> bool:
+    if not allowed:
+        return True
+    c = (city or "").strip().lower()
+    if not c:
+        return True
+    return any(a.lower() in c for a in allowed)
+
+
+async def _process_listings(listings: list, tag: str = "", allowed_modes=None):
     """Общая логика анализа и уведомлений для списка объявлений."""
+    if allowed_modes is None:
+        allowed_modes = {"urgent", "good"}
     max_price = RUNTIME_CONFIG.get("MAX_PRICE", 150000)
     target = RUNTIME_CONFIG.get("TARGET_MODELS", [])
+    allowed_cities = RUNTIME_CONFIG.get("ALLOWED_CITIES", [])
     for listing in listings:
         try:
             if listing.get("price", 0) > max_price:
                 logging.debug(
                     f"Пропуск: цена {listing['price']} > MAX_PRICE {max_price} "
                     f"({listing.get('title', listing.get('listing_id'))})"
+                )
+                continue
+
+            # Гео-фильтр: только Москва + ближнее Подмосковье (машина доедет)
+            if not _city_allowed(listing.get("city", ""), allowed_cities):
+                logging.debug(
+                    f"Пропуск: город вне зоны ({listing.get('city')}) "
+                    f"{listing.get('title', listing.get('listing_id'))}"
                 )
                 continue
 

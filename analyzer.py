@@ -241,6 +241,21 @@ def analyze_listing(listing: dict) -> dict:
     # Финальная валидация — score всегда в диапазоне 0..100
     dcb_score = max(0, min(100, dcb_score))
 
+    # ── Второй агент: Gemini Vision (фото) ────────────────────────────────
+    visual_issues = []
+    visual_ok = None
+    if dcb_score >= 60 and listing.get("photo_urls"):
+        try:
+            from vision_analyzer import analyze_photos
+            vision = analyze_photos(listing["photo_urls"], listing)
+            penalty = vision["photo_score_penalty"]
+            if penalty > 0:
+                dcb_score = max(0, dcb_score - penalty)
+                logging.info(f"Фото снизило Score на {penalty}: {vision['visual_issues']}")
+            visual_issues = vision["visual_issues"]
+            visual_ok = vision["visual_ok"]
+        except Exception as e:
+            logging.error(f"Vision интеграция: {e}")
     # Причина отказа — формируется для логирования пропущенных объявлений
     reject_reasons = []
     if seller.get("reseller_probability", 0) >= 70:
@@ -269,4 +284,6 @@ def analyze_listing(listing: dict) -> dict:
         "days_on_market": days,
         "age_minutes": age_minutes,
         "urgency_label": urgency_label,
+        "visual_issues": visual_issues,
+        "visual_ok": visual_ok,
     }

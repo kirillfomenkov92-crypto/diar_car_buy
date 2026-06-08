@@ -26,7 +26,7 @@ def authorized_only(func):
         return await func(update, context)
     return wrapper
 from database import (
-    get_today_stats, get_top5_today, get_deals_stats,
+    get_today_stats, get_top5_today, get_today_analyzed, get_deals_stats,
     add_deal, close_deal, get_active_arbitrage,
     get_speed_stats, get_source_stats,
 )
@@ -125,6 +125,31 @@ async def cmd_top5(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("\n".join(lines))
     except Exception as e:
         logging.error(f"Ошибка cmd_top5: {e}")
+
+
+@authorized_only
+async def cmd_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/today — ВСЕ проанализированные за сегодня машины (не только топ-5)."""
+    try:
+        items = get_today_analyzed(limit=20)
+        if not items:
+            await update.message.reply_text(
+                "Сегодня ещё нет проанализированных машин."
+            )
+            return
+        lines = [f"📅 Проанализировано сегодня: {len(items)}\n{LINE}"]
+        for i, it in enumerate(items, 1):
+            lines.append(
+                f"{i}. 🚗 {it['title']}\n"
+                f"   💰 {_fmt(it['price'])} ₽ | ⭐ Score: {it['score']}\n"
+                f"   🔗 {it['url']}"
+            )
+        lines.append(LINE)
+        await update.message.reply_text(
+            "\n".join(lines), disable_web_page_preview=True
+        )
+    except Exception as e:
+        logging.error(f"Ошибка cmd_today: {e}")
 
 
 @authorized_only
@@ -403,6 +428,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/status — состояние Авито и бота\n"
             "/stats — статистика за сегодня\n"
             "/top5 — топ-5 за 24 часа\n"
+            "/today — все машины за сегодня\n"
             "/sources — источники сегодня\n"
             "/market [модель] — срез рынка\n"
             "/arbitrage — арбитраж регион→Москва\n"
@@ -544,6 +570,7 @@ def get_command_handlers() -> list:
         ("status", cmd_status),
         ("stats", cmd_stats),
         ("top5", cmd_top5),
+        ("today", cmd_today),
         ("sources", cmd_sources),
         ("market", cmd_market),
         ("arbitrage", cmd_arbitrage),

@@ -16,22 +16,28 @@ from utils.headers import get_drom_headers
 
 SOURCE = "drom"
 
+# Москва + ближнее Подмосковье (≤ ~40 км). Далёкие регионы (Тула/Рязань/Калуга —
+# 150+ км) убраны: партнёру нужны машины, которые можно забрать самому.
 DROM_URLS = [
     "https://auto.drom.ru/moscow/all/?priceto={max_price}",
-    "https://auto.drom.ru/tula/all/?priceto=130000",
-    "https://auto.drom.ru/ryazan/all/?priceto=130000",
-    "https://auto.drom.ru/kaluga/all/?priceto=130000",
-    "https://auto.drom.ru/vladimir/all/?priceto=130000",
-    "https://auto.drom.ru/tver/all/?priceto=130000",
+    "https://auto.drom.ru/krasnogorsk/all/?priceto={max_price}",
+    "https://auto.drom.ru/himki/all/?priceto={max_price}",
+    "https://auto.drom.ru/balashiha/all/?priceto={max_price}",
+    "https://auto.drom.ru/mytishchi/all/?priceto={max_price}",
+    "https://auto.drom.ru/korolev/all/?priceto={max_price}",
+    "https://auto.drom.ru/podolsk/all/?priceto={max_price}",
+    "https://auto.drom.ru/elektrostal/all/?priceto={max_price}",
 ]
 
 _CITY_NAMES = {
-    "moscow":   "Москва",
-    "tula":     "Тула",
-    "ryazan":   "Рязань",
-    "kaluga":   "Калуга",
-    "vladimir": "Владимир",
-    "tver":     "Тверь",
+    "moscow":      "Москва",
+    "krasnogorsk": "Красногорск",
+    "himki":       "Химки",
+    "balashiha":   "Балашиха",
+    "mytishchi":   "Мытищи",
+    "korolev":     "Королёв",
+    "podolsk":     "Подольск",
+    "elektrostal": "Электросталь",
 }
 
 
@@ -53,6 +59,52 @@ def _drom_cookies() -> list:
     except Exception:
         pass
     return []
+
+
+def _photo_urls_from_card(card, limit: int = 5) -> list:
+    """Собрать ссылки на реальные фото машины из <img> карточки Drom.
+
+    Реальные снимки лежат на CDN *.auto.drom.ru/photo/ (иконки/логотипы — нет).
+    В srcset есть 1x и 2x версии одного снимка — берём максимальное разрешение,
+    дедупим по базовому пути (genNNNwb.jpg — варианты одного фото).
+    """
+    urls: list = []
+    seen: set = set()
+    for img in card.find_all("img"):
+        candidates: list = []
+        srcset = img.get("srcset") or img.get("data-srcset") or ""
+        if srcset:
+            # "url1 1x, url2 2x" — берём по убыванию плотности (2x крупнее 1x)
+            entries = []
+            for p in srcset.split(","):
+                p = p.strip()
+                if not p:
+                    continue
+                parts = p.split(" ")
+                density = parts[1] if len(parts) > 1 else "1x"
+                entries.append((density, parts[0]))
+            entries.sort(reverse=True)  # "2x" > "1x"
+            candidates.extend(u for _, u in entries)
+        for attr in ("data-src", "src"):
+            v = img.get(attr)
+            if v:
+                candidates.append(v)
+
+        # Только реальные фото машины с CDN drom; крупный размер из srcset в приоритете
+        photo = next((c for c in candidates if ".drom.ru/photo/" in c), None)
+        if not photo:
+            continue
+        if photo.startswith("//"):
+            photo = "https:" + photo
+
+        base = re.sub(r"/gen\d+wb\.jpg.*$", "", photo)
+        if base in seen:
+            continue
+        seen.add(base)
+        urls.append(photo)
+        if len(urls) >= limit:
+            break
+    return urls
 
 
 def _parse_card(card, city: str, is_regional: bool) -> dict | None:
@@ -81,6 +133,8 @@ def _parse_card(card, city: str, is_regional: bool) -> dict | None:
         location_el = card.find(attrs={"data-ftid": "bull_location"})
         location = location_el.get_text(strip=True) if location_el else city
 
+        photo_urls = _photo_urls_from_card(card)
+
         return {
             "listing_id":       listing_id,
             "source":           SOURCE,
@@ -90,8 +144,8 @@ def _parse_card(card, city: str, is_regional: bool) -> dict | None:
             "mileage":          0,
             "city":             location or city,
             "description":      title,
-            "photo_count":      0,
-            "photo_urls":       [],
+            "photo_count":      len(photo_urls),
+            "photo_urls":       photo_urls,
             "seller_ads_count": 0,
             "seller_id":        "",
             "published_at":     "",
@@ -164,18 +218,23 @@ def parse() -> list:
         return []
 
     max_price = RUNTIME_CONFIG.get("MAX_PRICE", 150000)
-    urls = [DROM_URLS[0].format(max_price=max_price)] + DROM_URLS[1:]
+    urls = [u.format(max_price=max_price) for u in DROM_URLS]
     results = []
+
+    from utils.proxy import playwright_proxy
+    proxy = playwright_proxy()
 
     try:
         with sync_playwright() as pw:
-            # Chromium: Firefox не работает на путях с кириллицей (Windows)
-            browser = pw.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-dev-shm-usage"],
-            )
+            # Firefox: лучше обходит антибот; на VPS кириллица не проблема
+            launch_kwargs = {"headless": True}
+            if proxy:
+                launch_kwargs["proxy"] = proxy
+            browser = pw.firefox.launch(**launch_kwargs)
             for i, url in enumerate(urls):
-                is_regional = i > 0
+                # Все города — ближнее Подмосковье/Москва, считаем локальными
+                # (арбитраж «из далёкого региона» больше не нужен).
+                is_regional = False
                 city_slug = url.split("drom.ru/")[1].split("/")[0]
                 city = _CITY_NAMES.get(city_slug, city_slug.capitalize())
                 city_results = _parse_city(url, city, is_regional, max_price, browser)

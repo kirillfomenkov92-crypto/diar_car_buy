@@ -9,6 +9,9 @@ lxml
 telethon
 fake-useragent
 playwright
+playwright-stealth
 python-dotenv
 pytest
 curl_cffi>=0.6.0
+browser_cookie3
+google-genai

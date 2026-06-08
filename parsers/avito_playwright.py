@@ -25,6 +25,12 @@ _CARD_SELECTORS = [
 ]
 
 
+def _proxy_config() -> dict | None:
+    """Резидентный прокси для Playwright (общий хелпер utils.proxy)."""
+    from utils.proxy import playwright_proxy
+    return playwright_proxy()
+
+
 async def _parse_item(item) -> dict | None:
     """Парсит одну карточку объявления."""
     try:
@@ -108,15 +114,14 @@ async def parse_async() -> list:
     url = AVITO_URL.format(max_price=max_price)
     results = []
 
+    proxy_config = _proxy_config()
+
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-dev-shm-usage",
-            ],
-        )
+        # Firefox: лучше обходит антибот; на VPS кириллица не проблема
+        launch_kwargs = {"headless": True}
+        if proxy_config:
+            launch_kwargs["proxy"] = proxy_config
+        browser = await p.firefox.launch(**launch_kwargs)
         context = await browser.new_context(
             user_agent=random.choice(USER_AGENTS),
             viewport={"width": 1280, "height": 800},
@@ -131,8 +136,10 @@ async def parse_async() -> list:
         await _stealth.apply_stealth_async(page)
 
         try:
-            await asyncio.sleep(random.uniform(2, 5))
-            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            # Пауза перед загрузкой: резидентный прокси добавляет задержку,
+            # к тому же снижает шанс капчи на «слишком быстрый» заход.
+            await asyncio.sleep(random.uniform(5, 10))
+            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
             await asyncio.sleep(random.uniform(3, 6))
 
             # Прокрутка как у человека
@@ -140,6 +147,15 @@ async def parse_async() -> list:
             await asyncio.sleep(random.uniform(1, 2))
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
             await asyncio.sleep(random.uniform(1, 2))
+
+            # Карточки на Avito подгружаются JS — ждём появления, иначе
+            # query_selector_all может сработать до рендера и вернуть 0.
+            for selector in _CARD_SELECTORS:
+                try:
+                    await page.wait_for_selector(selector, timeout=15000)
+                    break
+                except Exception:
+                    continue
 
             # Ищем карточки по нескольким селекторам
             items = []
@@ -149,17 +165,18 @@ async def parse_async() -> list:
                     logging.info(f"Avito Playwright: {len(items)} карточек ({selector})")
                     break
 
-            page_html = await page.content()
-            if is_captcha_response(page_html):
-                import time as _time
-                RUNTIME_CONFIG["AVITO_STEALTH_BLOCKED_UNTIL"] = _time.time() + 3600
-                RUNTIME_CONFIG["AVITO_WAS_BLOCKED"] = True
-                logging.warning("Avito Stealth: капча — пауза 60 минут")
-                await browser.close()
-                return []
-
+            # Капчу проверяем ТОЛЬКО когда карточек нет: на легитимной выдаче
+            # тоже встречаются слова-маркеры в скриптах, и раньше это давало
+            # ложную часовую паузу при реально загруженных объявлениях.
             if not items:
-                logging.warning("Avito Playwright: карточки не найдены — возможно блокировка")
+                page_html = await page.content()
+                if is_captcha_response(page_html):
+                    import time as _time
+                    RUNTIME_CONFIG["AVITO_STEALTH_BLOCKED_UNTIL"] = _time.time() + 3600
+                    RUNTIME_CONFIG["AVITO_WAS_BLOCKED"] = True
+                    logging.warning("Avito Stealth: капча — пауза 60 минут")
+                else:
+                    logging.warning("Avito Playwright: карточки не найдены — возможно блокировка")
                 await browser.close()
                 return []
 
