@@ -1,0 +1,25 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [ claude/stoic-bardeen-C3rZP ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /root/diar_car_buy
+            git fetch origin claude/stoic-bardeen-C3rZP
+            git reset --hard origin/claude/stoic-bardeen-C3rZP
+            source .venv/bin/activate
+            pip install -q -r requirements.txt
+            systemctl restart diarcarbuy
+            sleep 2
+            systemctl is-active diarcarbuy && echo "Deploy OK" || echo "Deploy FAILED"
