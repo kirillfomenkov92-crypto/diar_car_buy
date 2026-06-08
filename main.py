@@ -266,6 +266,7 @@ async def monitor_cycle():
     )
     logging.info(f"Всего объявлений для обработки: {len(listings)}")
 
+    record_heartbeat()
     await _process_listings(listings, tag="[FULL]")
 
 

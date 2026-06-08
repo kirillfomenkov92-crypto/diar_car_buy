@@ -7,8 +7,8 @@ import requests
 
 from config import RUNTIME_CONFIG
 
-# Порог молчания — если циклов не было дольше, шлём тревогу
-HEARTBEAT_TIMEOUT = 900  # 15 минут
+# Порог молчания — должен быть больше максимального интервала цикла (20 мин = 1200 с)
+HEARTBEAT_TIMEOUT = 1500  # 25 минут
 
 
 def record_heartbeat():
