@@ -477,6 +477,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                     max_price=st.get("max_price"),
                                     condition=cond,
                                     year_from=f.get("year_from"),
+                                    owners_only=f.get("owners_only", False),
                                     min_score=0, limit=5)
             await _deliver(q, items, TEXTS["search_header"])
 
@@ -493,6 +494,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             items = search_listings(country=st.get("country"),
                                     max_price=st.get("max_price"),
                                     year_from=f.get("year_from"),
+                                    owners_only=f.get("owners_only", False),
                                     min_score=0, limit=5)
             await _deliver(q, items, TEXTS["country_header"])
 

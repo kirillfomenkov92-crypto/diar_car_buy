@@ -93,8 +93,6 @@ def parse() -> list:
         if cnt >= 5:
             RUNTIME_CONFIG["AUTORU_EMPTY_CYCLES"] = 0
             _notify_stale_cookies()
-    else:
-        RUNTIME_CONFIG["AUTORU_EMPTY_CYCLES"] = 0
 
     return results
 

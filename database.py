@@ -1,4 +1,4 @@
-# database.py — слой работы с SQLite для Diar Car Buy AI v3.0.
+# database.py — слой работы с SQLite для Diar Car Buy AI v5.0.
 # 6 таблиц: seen_listings, market_data, deals, daily_stats,
 #           seller_history, arbitrage_opportunities.
 
@@ -66,6 +66,7 @@ def _migrate_db(conn):
         "ALTER TABLE daily_stats ADD COLUMN fastest_alert_minutes INTEGER",
         "ALTER TABLE deals ADD COLUMN dcb_score_at_buy INTEGER DEFAULT 0",
         "ALTER TABLE seen_listings ADD COLUMN year INTEGER DEFAULT 0",
+        "ALTER TABLE seen_listings ADD COLUMN seller_ads_count INTEGER DEFAULT 0",
     ]
     for sql in migrations:
         try:
@@ -95,6 +96,7 @@ def init_db():
                 last_notified         TEXT,
                 response_time_minutes INTEGER,
                 year                  INTEGER DEFAULT 0,
+                seller_ads_count      INTEGER DEFAULT 0,
                 UNIQUE(listing_id, source)
             )
         """)
@@ -179,6 +181,10 @@ def init_db():
             "CREATE INDEX IF NOT EXISTS idx_seen_source "
             "ON seen_listings(source)"
         )
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_seen_year "
+            "ON seen_listings(year)"
+        )
 
         conn.commit()
         _migrate_db(conn)
@@ -210,7 +216,8 @@ def is_seen(listing_id: str, source: str) -> bool:
 
 
 def mark_seen(listing_id: str, source: str, price: int,
-              title: str = "", listing_url: str = "", year: int = 0):
+              title: str = "", listing_url: str = "", year: int = 0,
+              seller_ads_count: int = 0):
     """Добавить новое объявление или обновить цену существующего."""
     try:
         now = datetime.now().isoformat()
@@ -226,9 +233,9 @@ def mark_seen(listing_id: str, source: str, price: int,
             history = json.dumps([{"date": now, "price": price}], ensure_ascii=False)
             cur.execute("""
                 INSERT INTO seen_listings
-                    (listing_id, source, title, listing_url, first_seen, last_price, price_history, year)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (listing_id, source, title, listing_url, now, price, history, year))
+                    (listing_id, source, title, listing_url, first_seen, last_price, price_history, year, seller_ads_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (listing_id, source, title, listing_url, now, price, history, year, seller_ads_count))
         else:
             try:
                 history = json.loads(row["price_history"]) if row["price_history"] else []
@@ -238,10 +245,12 @@ def mark_seen(listing_id: str, source: str, price: int,
                 history.append({"date": now, "price": price})
             cur.execute("""
                 UPDATE seen_listings
-                SET last_price=?, price_history=?, title=?, listing_url=?, year=CASE WHEN year=0 THEN ? ELSE year END
+                SET last_price=?, price_history=?, title=?, listing_url=?,
+                    year=CASE WHEN year=0 THEN ? ELSE year END,
+                    seller_ads_count=CASE WHEN seller_ads_count=0 THEN ? ELSE seller_ads_count END
                 WHERE listing_id=? AND source=?
             """, (price, json.dumps(history, ensure_ascii=False),
-                  title, listing_url, year, listing_id, source))
+                  title, listing_url, year, seller_ads_count, listing_id, source))
 
         conn.commit()
         conn.close()
@@ -807,7 +816,7 @@ def get_source_stats() -> dict:
 def search_listings(brand: str = None, max_price: int = None,
                     country: str = None, condition: str = None,
                     min_score: int = 0, limit: int = 5,
-                    year_from: int = None) -> list:
+                    year_from: int = None, owners_only: bool = False) -> list:
     """Поиск объявлений из seen_listings по марке/стране/цене/score/состоянию."""
     DOMESTIC = {"lada", "vaz", "газ", "уаз", "ваз", "нива", "kalina", "granta", "vesta"}
     try:
@@ -840,6 +849,8 @@ def search_listings(brand: str = None, max_price: int = None,
         if year_from and year_from > 0:
             clauses.append("year >= ?")
             params.append(year_from)
+        if owners_only:
+            clauses.append("seller_ads_count <= 1")
         where = " AND ".join(clauses)
         params.append(limit)
         rows = conn.execute(
