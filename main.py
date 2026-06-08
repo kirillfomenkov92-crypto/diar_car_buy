@@ -175,11 +175,11 @@ async def fast_cycle():
         except Exception as _e:
             logging.debug(f"reschedule: {_e}")
 
-    fresh = [
-        l for l in listings
-        if not l.get("published_at")
-        or calculate_listing_age_minutes(l.get("published_at")) <= 30
-    ]
+    def _age(l):
+        pa = l.get("published_at", "")
+        return 0 if not pa else calculate_listing_age_minutes(pa)
+
+    fresh = [l for l in listings if _age(l) <= 30]
     logging.info(f"[FAST] Свежих (до 30 мин): {len(fresh)} из {len(listings)}")
 
     record_heartbeat()
