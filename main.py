@@ -177,7 +177,8 @@ async def fast_cycle():
 
     fresh = [
         l for l in listings
-        if calculate_listing_age_minutes(l.get("published_at", "")) <= 30
+        if not l.get("published_at")
+        or calculate_listing_age_minutes(l.get("published_at")) <= 30
     ]
     logging.info(f"[FAST] Свежих (до 30 мин): {len(fresh)} из {len(listings)}")
 
