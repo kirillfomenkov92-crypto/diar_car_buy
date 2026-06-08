@@ -1,0 +1,25 @@
+# config.yaml.example — шаблон конфигурации Diar Car Buy AI v5.0.
+# Скопируйте в config.yaml и заполните значения:
+#   cp config.yaml.example config.yaml
+# Секреты можно держать в .env (он перекрывает config.yaml).
+
+TELEGRAM_BOT_TOKEN: ""      # токен от @BotFather
+TELEGRAM_CHAT_ID: ""        # ваш chat id
+GEMINI_API_KEY: ""          # ключ Google AI Studio
+GROQ_API_KEY: ""            # ключ Groq (опционально)
+VK_ACCESS_TOKEN: ""         # токен VK API (опционально)
+TG_API_ID: ""               # api_id с my.telegram.org (опционально)
+TG_API_HASH: ""             # api_hash с my.telegram.org (опционально)
+
+MAX_PRICE: 140000           # бюджет, ₽
+MIN_DCB_SCORE: 70           # порог уведомления
+CHECK_INTERVAL_MINUTES: 15  # интервал проверки, мин
+PAUSED: false               # стартовое состояние мониторинга
+
+SOURCES:
+  avito: true
+  drom: true
+  autoru: true
+  youla: true
+  vk: true
+  telegram: true

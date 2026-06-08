@@ -185,6 +185,41 @@ python main.py
 
 ---
 
+## Развёртывание на VPS (Ubuntu)
+
+В репозитории есть скрипт `deploy.sh`, который ставит зависимости, клонирует/
+обновляет код, создаёт virtualenv, инициализирует БД и поднимает systemd-сервис.
+Скрипт идемпотентен — его можно запускать повторно для обновления.
+
+Запуск **на сервере** под root:
+
+```bash
+# Приватный репозиторий — задайте токен для первого клонирования
+GITHUB_TOKEN=ghp_xxx \
+BRANCH=claude/stoic-bardeen-C3rZP \
+bash <(curl -fsSL https://raw.githubusercontent.com/kirillfomenkov92-crypto/diar_car_buy/claude/stoic-bardeen-C3rZP/deploy.sh)
+```
+
+Или, если репозиторий уже склонирован:
+
+```bash
+cd /root/diar_car_buy && bash deploy.sh
+```
+
+После установки заполните `config.yaml` (токены, Chat ID, GEMINI_API_KEY) и
+перезапустите сервис:
+
+```bash
+nano /root/diar_car_buy/config.yaml
+systemctl restart diarcarbuy
+journalctl -u diarcarbuy -f      # логи в реальном времени
+```
+
+Управление сервисом: `systemctl {start|stop|restart|status} diarcarbuy`.
+
+> ⚠️ После развёртывания смените root-пароль и по возможности перейдите на
+> SSH-ключи с отключением парольной аутентификации.
+
 ## Структура проекта
 
 ```
@@ -211,6 +246,7 @@ diar_car_buy/
 ├── prompts/
 │   └── system.txt         # системный промпт (перекупщик 15 лет)
 ├── config.yaml
+├── deploy.sh              # установка/обновление на VPS + systemd
 ├── requirements.txt
 └── README.md
 ```
