@@ -471,8 +471,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("bi_sc_"):
             st = _state(uid)
             st["condition"] = data[len("bi_sc_"):]
+            cond = st["condition"] if st["condition"] != "any" else None
             items = search_listings(brand=st.get("brand"),
                                     max_price=st.get("max_price"),
+                                    condition=cond,
                                     min_score=0, limit=5)
             await _deliver(q, items, TEXTS["search_header"])
 

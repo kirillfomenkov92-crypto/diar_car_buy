@@ -801,8 +801,9 @@ def get_source_stats() -> dict:
 
 
 def search_listings(brand: str = None, max_price: int = None,
-                    country: str = None, min_score: int = 0, limit: int = 5) -> list:
-    """Поиск объявлений из seen_listings по марке/стране/цене/score."""
+                    country: str = None, condition: str = None,
+                    min_score: int = 0, limit: int = 5) -> list:
+    """Поиск объявлений из seen_listings по марке/стране/цене/score/состоянию."""
     DOMESTIC = {"lada", "vaz", "газ", "уаз", "ваз", "нива", "kalina", "granta", "vesta"}
     try:
         conn = _connect()
@@ -823,6 +824,14 @@ def search_listings(brand: str = None, max_price: int = None,
             brand_filters = " AND ".join("LOWER(title) NOT LIKE ?" for _ in DOMESTIC)
             clauses.append(f"({brand_filters})")
             params.extend(f"%{b}%" for b in DOMESTIC)
+        # condition: 'noresell' — исключаем с низким score (перекупы штрафуются),
+        #            'nodtp' — только высокий score (аварийные получают штраф от LLM)
+        if condition == "noresell":
+            clauses.append("last_dcb_score >= ?")
+            params.append(65)
+        elif condition == "nodtp":
+            clauses.append("last_dcb_score >= ?")
+            params.append(70)
         where = " AND ".join(clauses)
         params.append(limit)
         rows = conn.execute(
@@ -843,7 +852,7 @@ def get_recent_listings(minutes: int = 60, min_score: int = 0, limit: int = 5) -
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """SELECT * FROM seen_listings
-               WHERE first_seen > datetime('now', ?)
+               WHERE first_seen > datetime('now', 'localtime', ?)
                  AND last_dcb_score >= ?
                ORDER BY first_seen DESC LIMIT ?""",
             (f"-{minutes} minutes", min_score, limit),
@@ -906,7 +915,7 @@ def is_duplicate_listing(title: str, price: int, year: int, exclude_source: str)
             WHERE source != ?
               AND last_price BETWEEN ? AND ?
               AND title LIKE ?
-              AND first_seen > datetime('now', '-1 day')
+              AND first_seen > datetime('now', 'localtime', '-1 day')
         """, (exclude_source, int(price * 0.95), int(price * 1.05), f"%{year}%"))
         count = cur.fetchone()[0]
         conn.close()

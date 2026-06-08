@@ -11,16 +11,18 @@ from database import was_notified, score_changed, mark_notified
 MAX_MESSAGE_LEN = 4000
 
 
-def _send_part(token: str, chat_id: str, text: str, retries: int = 3) -> bool:
+def _send_part(token: str, chat_id: str, text: str, retries: int = 3,
+               parse_mode: str = None, reply_markup: dict = None) -> bool:
     """Отправить одну часть сообщения одному chat_id. True если доставлено."""
     url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     for attempt in range(retries):
         try:
-            resp = requests.post(
-                url,
-                json={"chat_id": chat_id, "text": text, "disable_web_page_preview": True},
-                timeout=15,
-            )
+            resp = requests.post(url, json=payload, timeout=15)
             resp.raise_for_status()
             return True
         except Exception as e:
@@ -45,9 +47,8 @@ def _recipients() -> list:
 def send_notification(result: dict):
     """
     Отправить уведомление по результату анализа объявления.
-    - Пропускает если уже уведомляли и DCB Score не изменился.
-    - Добавляет заголовок об арбитраже / снижении цены.
-    - Разбивает длинные сообщения на части по 4000 символов.
+    Использует HTML-карточку из build_notification() если доступна,
+    иначе fallback на plain-text из full_analysis.
     """
     try:
         load_config()
@@ -55,8 +56,6 @@ def send_notification(result: dict):
         listing_id = listing.get("listing_id")
         source = listing.get("source")
         dcb_score = result.get("dcb_score", 0)
-        strategy = result.get("strategy", {})
-        arbitrage = result.get("arbitrage")
 
         # Финальная проверка цены — блокируем уведомления дороже бюджета
         price = listing.get("price", 0)
@@ -74,36 +73,46 @@ def send_notification(result: dict):
                 logging.info(f"Пропуск {listing_id}: оценка не изменилась")
                 return
 
-        # Заголовок
-        header_parts = []
-        if arbitrage:
-            header_parts.append(
-                f"🚚 АРБИТРАЖ из {arbitrage['city']}! "
-                f"Прибыль: +{arbitrage['net_profit']:,} ₽".replace(",", " ")
-            )
-        if result.get("price_dropped"):
-            header_parts.append(
-                f"🔄 ОБНОВЛЕНО — цена упала на {result['drop_amount']:,} ₽".replace(",", " ")
-            )
-        header = "\n".join(header_parts) + "\n\n" if header_parts else ""
+        # HTML-карточка из bot_interface (красивое форматирование)
+        text = ""
+        parse_mode = None
+        reply_markup_dict = None
+        try:
+            from bot_interface import build_notification
+            html_text, keyboard = build_notification(result)
+            if html_text:
+                text = html_text
+                parse_mode = "HTML"
+                reply_markup_dict = keyboard.to_dict() if keyboard else None
+        except Exception as e:
+            logging.warning(f"build_notification недоступен: {e} — fallback на plain text")
 
-        # Основное тело
-        body = result.get("full_analysis", "")
+        # Fallback: сырой LLM-текст + стратегия + ссылка
+        if not text:
+            strategy = result.get("strategy", {})
+            arbitrage = result.get("arbitrage")
+            header_parts = []
+            if arbitrage:
+                header_parts.append(
+                    f"🚚 АРБИТРАЖ из {arbitrage['city']}! "
+                    f"Прибыль: +{arbitrage['net_profit']:,} ₽".replace(",", " ")
+                )
+            if result.get("price_dropped"):
+                header_parts.append(
+                    f"🔄 ОБНОВЛЕНО — цена упала на {result['drop_amount']:,} ₽".replace(",", " ")
+                )
+            header = "\n".join(header_parts) + "\n\n" if header_parts else ""
+            body = result.get("full_analysis", "")
+            footer_parts = []
+            if strategy:
+                footer_parts.append(f"📞 ЗВОНИТЬ: {strategy.get('best_time', '')}")
+                footer_parts.append(f"💬 \"{strategy.get('call_script', '')}\"")
+            footer_parts.append(f"⏱ {result.get('urgency_label', '')}")
+            footer_parts.append(f"🔗 {listing.get('listing_url', '')}")
+            text = f"{header}{body}\n\n{'\n'.join(footer_parts)}"
 
-        # Стратегия звонка
-        footer_parts = []
-        if strategy:
-            footer_parts.append(f"📞 ЗВОНИТЬ: {strategy.get('best_time', '')}")
-            footer_parts.append(f"💬 \"{strategy.get('call_script', '')}\"")
-        footer_parts.append(f"⏱ {result.get('urgency_label', '')}")
-        footer_parts.append(f"🔗 {listing.get('listing_url', '')}")
-        footer = "\n".join(footer_parts)
-
-        message = f"{header}{body}\n\n{footer}"
-
-        # Разбивка на части
-        parts = [message[i:i + MAX_MESSAGE_LEN]
-                 for i in range(0, len(message), MAX_MESSAGE_LEN)]
+        # Разбивка на части (4000 символов — лимит Telegram)
+        parts = [text[i:i + MAX_MESSAGE_LEN] for i in range(0, len(text), MAX_MESSAGE_LEN)]
 
         token = RUNTIME_CONFIG.get("TELEGRAM_BOT_TOKEN", "")
         recipients = _recipients()
@@ -112,12 +121,16 @@ def send_notification(result: dict):
             logging.error("Не задан TELEGRAM_BOT_TOKEN или список получателей")
             return
 
-        # Шлём всем админам. send_ok=True если доставлено хотя бы одному —
-        # помечаем как уведомлённое только при успешной доставке.
+        # Шлём всем: клавиатура только к первой части, остальные — plain
         send_ok = False
         for chat_id in recipients:
-            delivered = all(_send_part(token, chat_id, part) for part in parts)
-            if delivered:
+            ok_parts = []
+            for i, part in enumerate(parts):
+                kb = reply_markup_dict if i == 0 else None
+                delivered = _send_part(token, chat_id, part,
+                                       parse_mode=parse_mode, reply_markup=kb)
+                ok_parts.append(delivered)
+            if all(ok_parts):
                 send_ok = True
             else:
                 logging.warning(f"Доставка {chat_id} не удалась: {listing_id}")

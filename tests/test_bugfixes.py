@@ -24,7 +24,7 @@ def test_notifier_no_mark_on_send_failure(monkeypatch):
     monkeypatch.setattr(notifier, "mark_notified",
                         lambda lid, src, score: mark_called.append(1) or True)
     monkeypatch.setattr(notifier, "_send_part",
-                        lambda token, chat, text, retries=3: (_ for _ in ()).throw(
+                        lambda token, chat, text, retries=3, **kw: (_ for _ in ()).throw(
                             Exception("network error")))
 
     result = {
@@ -59,8 +59,8 @@ def test_notifier_marks_on_success(monkeypatch):
     monkeypatch.setattr(notifier, "score_changed", lambda lid, src, s: True)
     monkeypatch.setattr(notifier, "mark_notified",
                         lambda lid, src, score: mark_called.append(1) or True)
-    # _send_part теперь возвращает bool (True = доставлено)
-    monkeypatch.setattr(notifier, "_send_part", lambda token, chat, text, retries=3: True)
+    monkeypatch.setattr(notifier, "_send_part",
+                        lambda token, chat, text, retries=3, **kw: True)
 
     result = {
         "listing": {"listing_id": "abc456", "source": "avito", "price": 90000},
