@@ -214,6 +214,8 @@ async def fast_cycle():
         except Exception as _e:
             logging.debug(f"reschedule: {_e}")
 
+    _remember_listings(listings)
+
     def _age(l):
         pa = l.get("published_at", "")
         return 0 if not pa else calculate_listing_age_minutes(pa)
