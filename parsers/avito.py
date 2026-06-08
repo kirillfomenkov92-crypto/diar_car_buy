@@ -1,4 +1,4 @@
-# parsers/avito.py — парсер Avito через Playwright headless Firefox (fallback: Chromium).
+﻿# parsers/avito.py — парсер Avito через Playwright headless Firefox (fallback: Chromium).
 
 import re
 import time
@@ -73,7 +73,7 @@ def _parse_price(text: str) -> int:
 
 
 def _extract_year(text: str) -> int:
-    m = re.search(r"\b(199\d|200\d|201\d|202[0-6])\b", text)
+    m = re.search(r"\b(199\d|200\d|201\d|202\d)\b", text)
     return int(m.group(1)) if m else 0
 
 

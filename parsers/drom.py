@@ -1,4 +1,4 @@
-# parsers/drom.py — парсер Drom.ru через Playwright Firefox.
+﻿# parsers/drom.py — парсер Drom.ru через Playwright Firefox.
 # Drom рендерит листинги через JS — curl_cffi даёт только платные размещения.
 # Playwright + скролл загружает реальные отфильтрованные объявления.
 # Москва + региональные URL (is_regional=True для арбитража).
@@ -127,7 +127,7 @@ def _parse_card(card, city: str, is_regional: bool) -> dict | None:
         price_text = price_el.get_text(strip=True) if price_el else ""
         price = int(re.sub(r"\D", "", price_text)) if price_text else 0
 
-        year_m = re.search(r"\b(199\d|200\d|201\d|202[0-6])\b", title)
+        year_m = re.search(r"\b(199\d|200\d|201\d|202\d)\b", title)
         year = int(year_m.group(1)) if year_m else 0
 
         location_el = card.find(attrs={"data-ftid": "bull_location"})

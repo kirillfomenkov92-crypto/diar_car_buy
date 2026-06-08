@@ -1,4 +1,4 @@
-# parsers/avito_playwright.py — async fallback-парсер Avito через Playwright + stealth.
+﻿# parsers/avito_playwright.py — async fallback-парсер Avito через Playwright + stealth.
 # Запускается автоматически из parsers/avito.py если основной парсер вернул 0.
 
 import asyncio
@@ -69,7 +69,7 @@ async def _parse_item(item) -> dict | None:
         description = (await desc_el.inner_text()).strip() if desc_el else ""
 
         full_text = f"{title} {description}"
-        year_match = re.search(r"\b(199\d|200\d|201\d|202[0-6])\b", full_text)
+        year_match = re.search(r"\b(199\d|200\d|201\d|202\d)\b", full_text)
         year = int(year_match.group(1)) if year_match else 0
 
         mileage_match = re.search(r"(\d+)\s*(?:тыс\.?\s*)?км", full_text)

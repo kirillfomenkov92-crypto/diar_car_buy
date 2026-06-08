@@ -1,4 +1,4 @@
-# parsers/avito_rss.py — парсер Avito через curl_cffi (Firefox TLS fingerprint) + BeautifulSoup.
+﻿# parsers/avito_rss.py — парсер Avito через curl_cffi (Firefox TLS fingerprint) + BeautifulSoup.
 # Обходит капчу без Playwright: правильный TLS fingerprint + куки из реального Firefox.
 
 import logging
@@ -63,7 +63,7 @@ def _parse_price(text: str) -> int:
 
 
 def _extract_year(text: str) -> int:
-    m = re.search(r"\b(199\d|200\d|201\d|202[0-6])\b", text)
+    m = re.search(r"\b(199\d|200\d|201\d|202\d)\b", text)
     return int(m.group(1)) if m else 0
 
 

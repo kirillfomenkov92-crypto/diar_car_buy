@@ -1,4 +1,4 @@
-# parsers/vk_parser.py — парсер ВКонтакте для Diar Car Buy AI v3.0.
+﻿# parsers/vk_parser.py — парсер ВКонтакте для Diar Car Buy AI v3.0.
 # Объявления из VK групп появляются РАНЬШЕ чем на Avito.
 # Использует официальный VK API — без парсинга HTML.
 
@@ -23,7 +23,7 @@ CAR_KEYWORDS = [
 
 def extract_year_from_text(text: str) -> int:
     """Извлечь год выпуска из текста объявления."""
-    match = re.search(r"\b(199\d|200\d|201\d|202[0-6])\b", text)
+    match = re.search(r"\b(199\d|200\d|201\d|202\d)\b", text)
     return int(match.group(1)) if match else 0
 
 

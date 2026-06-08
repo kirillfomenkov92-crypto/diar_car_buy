@@ -1,4 +1,4 @@
-# parsers/tg_parser.py — парсер Telegram для Diar Car Buy AI v3.0.
+﻿# parsers/tg_parser.py — парсер Telegram для Diar Car Buy AI v3.0.
 # Самый быстрый источник: объявления появляются за 5-15 минут до Avito.
 # Использует Telethon (MTProto). Синхронная обёртка для вызова из main.py.
 
@@ -17,7 +17,7 @@ SALE_KEYWORDS = ["продам", "продаю", "продаётся"]
 
 def extract_year_from_text(text: str) -> int:
     """Извлечь год выпуска из текста объявления."""
-    match = re.search(r"\b(199\d|200\d|201\d|202[0-6])\b", text)
+    match = re.search(r"\b(199\d|200\d|201\d|202\d)\b", text)
     return int(match.group(1)) if match else 0
 
 
