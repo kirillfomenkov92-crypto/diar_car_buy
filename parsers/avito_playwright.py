@@ -205,10 +205,12 @@ async def parse_async() -> list:
 
 def parse() -> list:
     """Синхронная обёртка — вызывается из main.py через asyncio.to_thread."""
+    loop = asyncio.new_event_loop()
     try:
-        loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         return loop.run_until_complete(parse_async())
     except Exception as e:
         logging.error(f"Avito Playwright sync wrapper: {e}")
         return []
+    finally:
+        loop.close()

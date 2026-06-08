@@ -293,8 +293,6 @@ def parse() -> list:
                     RUNTIME_CONFIG["AVITO_CURL_BLOCKED_UNTIL"] = now + 1800
                     logging.warning("Avito curl: капча — пауза 30 мин")
                 else:
-                    from parsers.avito_rss import parse as _rss  # переиспользуем парсер карточек
-                    # строим results из уже загруженного soup
                     from database import is_seen
                     for card in cards:
                         try:

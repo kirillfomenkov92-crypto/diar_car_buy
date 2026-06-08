@@ -472,9 +472,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             st = _state(uid)
             st["condition"] = data[len("bi_sc_"):]
             cond = st["condition"] if st["condition"] != "any" else None
+            f = _filters(uid)
             items = search_listings(brand=st.get("brand"),
                                     max_price=st.get("max_price"),
                                     condition=cond,
+                                    year_from=f.get("year_from"),
                                     min_score=0, limit=5)
             await _deliver(q, items, TEXTS["search_header"])
 
@@ -487,8 +489,10 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("bi_cp_"):
             st = _state(uid)
             st["max_price"] = int(data[len("bi_cp_"):])
+            f = _filters(uid)
             items = search_listings(country=st.get("country"),
                                     max_price=st.get("max_price"),
+                                    year_from=f.get("year_from"),
                                     min_score=0, limit=5)
             await _deliver(q, items, TEXTS["country_header"])
 

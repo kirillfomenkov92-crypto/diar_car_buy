@@ -65,6 +65,7 @@ def _migrate_db(conn):
         "ALTER TABLE deals ADD COLUMN source TEXT",
         "ALTER TABLE daily_stats ADD COLUMN fastest_alert_minutes INTEGER",
         "ALTER TABLE deals ADD COLUMN dcb_score_at_buy INTEGER DEFAULT 0",
+        "ALTER TABLE seen_listings ADD COLUMN year INTEGER DEFAULT 0",
     ]
     for sql in migrations:
         try:
@@ -93,6 +94,7 @@ def init_db():
                 last_dcb_score        INTEGER,
                 last_notified         TEXT,
                 response_time_minutes INTEGER,
+                year                  INTEGER DEFAULT 0,
                 UNIQUE(listing_id, source)
             )
         """)
@@ -208,7 +210,7 @@ def is_seen(listing_id: str, source: str) -> bool:
 
 
 def mark_seen(listing_id: str, source: str, price: int,
-              title: str = "", listing_url: str = ""):
+              title: str = "", listing_url: str = "", year: int = 0):
     """Добавить новое объявление или обновить цену существующего."""
     try:
         now = datetime.now().isoformat()
@@ -224,9 +226,9 @@ def mark_seen(listing_id: str, source: str, price: int,
             history = json.dumps([{"date": now, "price": price}], ensure_ascii=False)
             cur.execute("""
                 INSERT INTO seen_listings
-                    (listing_id, source, title, listing_url, first_seen, last_price, price_history)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (listing_id, source, title, listing_url, now, price, history))
+                    (listing_id, source, title, listing_url, first_seen, last_price, price_history, year)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (listing_id, source, title, listing_url, now, price, history, year))
         else:
             try:
                 history = json.loads(row["price_history"]) if row["price_history"] else []
@@ -236,10 +238,10 @@ def mark_seen(listing_id: str, source: str, price: int,
                 history.append({"date": now, "price": price})
             cur.execute("""
                 UPDATE seen_listings
-                SET last_price=?, price_history=?, title=?, listing_url=?
+                SET last_price=?, price_history=?, title=?, listing_url=?, year=CASE WHEN year=0 THEN ? ELSE year END
                 WHERE listing_id=? AND source=?
             """, (price, json.dumps(history, ensure_ascii=False),
-                  title, listing_url, listing_id, source))
+                  title, listing_url, year, listing_id, source))
 
         conn.commit()
         conn.close()
@@ -804,7 +806,8 @@ def get_source_stats() -> dict:
 
 def search_listings(brand: str = None, max_price: int = None,
                     country: str = None, condition: str = None,
-                    min_score: int = 0, limit: int = 5) -> list:
+                    min_score: int = 0, limit: int = 5,
+                    year_from: int = None) -> list:
     """Поиск объявлений из seen_listings по марке/стране/цене/score/состоянию."""
     DOMESTIC = {"lada", "vaz", "газ", "уаз", "ваз", "нива", "kalina", "granta", "vesta"}
     try:
@@ -834,6 +837,9 @@ def search_listings(brand: str = None, max_price: int = None,
         elif condition == "nodtp":
             clauses.append("last_dcb_score >= ?")
             params.append(70)
+        if year_from and year_from > 0:
+            clauses.append("year >= ?")
+            params.append(year_from)
         where = " AND ".join(clauses)
         params.append(limit)
         rows = conn.execute(

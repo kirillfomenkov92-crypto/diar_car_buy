@@ -43,6 +43,7 @@ def _remember_listings(listings: list):
             mark_seen(
                 lid, l.get("source", ""), l.get("price", 0),
                 l.get("title", ""), l.get("listing_url", ""),
+                l.get("year", 0),
             )
         except Exception as e:
             logging.debug(f"remember {l.get('listing_id')}: {e}")
@@ -94,6 +95,7 @@ async def _process_listings(listings: list, tag: str = "", allowed_modes=None):
             mark_seen(
                 lid, src, listing["price"],
                 listing.get("title", ""), listing.get("listing_url", ""),
+                listing.get("year", 0),
             )
             increment_analyzed()
 
