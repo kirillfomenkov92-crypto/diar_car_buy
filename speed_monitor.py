@@ -1,6 +1,7 @@
 # speed_monitor.py — мониторинг скорости появления объявлений.
 # Ключевое конкурентное преимущество: видеть объявление раньше рынка.
 
+import re
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import logging
@@ -13,6 +14,19 @@ def calculate_listing_age_minutes(published_at: str) -> int:
             return 999
         pub_str = str(published_at).strip()
         pub_time = None
+
+        # Русский относительный формат: "2 часа назад", "30 минут назад"
+        ru_match = re.search(r"(\d+)\s*(минут|минуты|минуту|час|часа|часов|день|дня|дней)", pub_str)
+        if ru_match:
+            n, unit = int(ru_match.group(1)), ru_match.group(2)
+            if "мин" in unit:
+                return n
+            elif "час" in unit:
+                return n * 60
+            elif "ден" in unit or "дн" in unit or "дня" in unit or "день" in unit:
+                return n * 1440
+        if "вчера" in pub_str.lower():
+            return 1440
 
         # RFC 2822 / RSS формат: "Mon, 01 Jun 2026 14:32:00 +0300"
         try:

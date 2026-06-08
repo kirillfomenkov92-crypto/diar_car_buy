@@ -216,8 +216,8 @@ async def fast_cycle():
         pa = l.get("published_at", "")
         return 0 if not pa else calculate_listing_age_minutes(pa)
 
-    fresh = [l for l in listings if _age(l) <= 30]
-    logging.info(f"[FAST] Свежих (до 30 мин): {len(fresh)} из {len(listings)}")
+    fresh = [l for l in listings if _age(l) <= 180]
+    logging.info(f"[FAST] Свежих (до 3 ч): {len(fresh)} из {len(listings)}")
 
     record_heartbeat()
     await _process_listings(fresh, tag="[FAST]")
