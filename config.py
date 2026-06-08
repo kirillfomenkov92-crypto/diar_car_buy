@@ -27,7 +27,7 @@ def load_config() -> dict:
         from dotenv import load_dotenv
         import os
         load_dotenv()
-        for key in ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "GEMINI_API_KEY", "DEEPSEEK_API_KEY"]:
+        for key in ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "GEMINI_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY"]:
             env_val = os.getenv(key)
             if env_val:
                 RUNTIME_CONFIG[key] = env_val

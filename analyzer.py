@@ -1,4 +1,4 @@
-# analyzer.py — главный анализатор: синтез всех модулей + DeepSeek API.
+# analyzer.py — главный анализатор: синтез всех модулей + LLM fallback цепочка.
 
 import re
 import time
@@ -26,9 +26,28 @@ MONTH_NAMES = [
     "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
 ]
 
+# Цепочка провайдеров: Groq (бесплатный) → DeepSeek (платный) → локальный скоринг
+LLM_PROVIDERS = [
+    {
+        "name": "groq",
+        "key_config": "GROQ_API_KEY",
+        "base_url": "https://api.groq.com/openai/v1",
+        "model": "llama-3.3-70b-versatile",
+        "disabled_flag": "GROQ_DISABLED",
+        "error_codes": [429, 402, 401],
+    },
+    {
+        "name": "deepseek",
+        "key_config": "DEEPSEEK_API_KEY",
+        "base_url": "https://api.deepseek.com",
+        "model": "deepseek-chat",
+        "disabled_flag": "DEEPSEEK_DISABLED",
+        "error_codes": [402, 401],
+    },
+]
+
 
 def _read_system_prompt() -> str:
-    """Прочитать системный промпт из файла."""
     try:
         with open(SYSTEM_PROMPT_PATH, encoding="utf-8") as f:
             return f.read()
@@ -37,15 +56,14 @@ def _read_system_prompt() -> str:
         return ""
 
 
-def _notify_llm_down():
-    """Уведомить админов один раз о 10 ошибках DeepSeek подряд."""
+def _notify_llm_down(provider_name: str = "LLM"):
     token = RUNTIME_CONFIG.get("TELEGRAM_BOT_TOKEN", "")
     chat_id = RUNTIME_CONFIG.get("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
         return
     text = (
-        "⚠️ DeepSeek не отвечает 10 раз подряд — возможно лимит ключа исчерпан.\n"
-        "Бот использует локальный анализ."
+        f"⚠️ {provider_name} недоступен (нет баланса или ключ неверный).\n"
+        "Бот автоматически переключился на следующий провайдер."
     )
     try:
         requests.post(
@@ -53,24 +71,92 @@ def _notify_llm_down():
             json={"chat_id": chat_id, "text": text},
             timeout=10,
         )
-        logging.warning("DeepSeek down: уведомление отправлено админам")
+        logging.warning(f"{provider_name} down: уведомление отправлено админам")
     except Exception as e:
-        logging.error(f"Не удалось отправить уведомление о DeepSeek: {e}")
+        logging.error(f"Не удалось отправить уведомление о {provider_name}: {e}")
 
 
 def _fmt(n) -> str:
-    """Форматировать число с пробелами (10 000 ₽)."""
     try:
         return f"{int(n):,}".replace(",", " ")
     except Exception:
         return str(n)
 
 
+def _try_provider(provider: dict, system_prompt: str, user_msg: str) -> str | None:
+    """Пробует один LLM-провайдер. При 429 — пауза 30 сек и одна повторная попытка."""
+    name = provider["name"]
+    api_key = RUNTIME_CONFIG.get(provider["key_config"], "")
+    if not api_key:
+        return None
+
+    for attempt in range(2):
+        try:
+            client = OpenAI(api_key=api_key, base_url=provider["base_url"])
+            response = client.chat.completions.create(
+                model=provider["model"],
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+                max_tokens=1000,
+                timeout=30,
+            )
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            err_str = str(e)
+            # 429 rate limit — одна повторная попытка через 30 сек
+            if "429" in err_str and attempt == 0:
+                logging.warning(f"LLM {name}: 429 rate limit — пауза 30 сек")
+                time.sleep(30)
+                continue
+            # 402 нет баланса — отключаем провайдер
+            if "402" in err_str or "Insufficient Balance" in err_str:
+                RUNTIME_CONFIG[provider["disabled_flag"]] = True
+                _notify_llm_down(name)
+                logging.warning(f"LLM {name}: 402 — отключён, пополните баланс")
+            # 401 неверный ключ — отключаем провайдер
+            elif "401" in err_str or "Unauthorized" in err_str or "Invalid API key" in err_str:
+                RUNTIME_CONFIG[provider["disabled_flag"]] = True
+                logging.warning(f"LLM {name}: 401 — неверный ключ, отключён")
+            else:
+                logging.error(f"LLM {name} ошибка: {e}")
+            return None
+
+    return None
+
+
+def get_llm_response(system_prompt: str, user_msg: str) -> tuple[str, str]:
+    """Пробует провайдеров по цепочке Groq → DeepSeek.
+    Возвращает (текст_ответа, имя_провайдера) или ('', '') если все недоступны."""
+    for i, provider in enumerate(LLM_PROVIDERS):
+        if RUNTIME_CONFIG.get(provider["disabled_flag"]):
+            continue
+        if not RUNTIME_CONFIG.get(provider["key_config"]):
+            continue
+
+        name = provider["name"]
+        result = _try_provider(provider, system_prompt, user_msg)
+        if result:
+            return result, name
+
+        # Этот провайдер не ответил — находим следующего и логируем переключение
+        remaining = [
+            p for p in LLM_PROVIDERS[i + 1:]
+            if not RUNTIME_CONFIG.get(p["disabled_flag"])
+            and RUNTIME_CONFIG.get(p["key_config"])
+        ]
+        if remaining:
+            logging.warning(f"LLM переключился: {name} → {remaining[0]['name']}")
+
+    return "", ""
+
+
 def analyze_listing(listing: dict) -> dict:
     """
     Главный анализатор объявления.
     Синтезирует рыночный анализ, профиль продавца, детектор фрода,
-    стратегию сделки, арбитраж и DeepSeek API (deepseek-chat).
+    стратегию сделки, арбитраж и LLM (Groq → DeepSeek → локальный).
     Возвращает полный dict с dcb_score, verdict, full_analysis и всеми модулями.
     """
     load_config()
@@ -112,7 +198,7 @@ def analyze_listing(listing: dict) -> dict:
     price_val = listing.get("price") or 0
     mileage_val = listing.get("mileage") or 0
 
-    # ── Предфильтр: цена выше рынка → не тратим Groq ─────────────────────
+    # ── Предфильтр: цена выше рынка → не тратим LLM ──────────────────────
     market_avg = market.get("market_avg", 0)
     if market_avg > 0 and price_val > market_avg * 1.05:
         logging.info(f"Пропущено (цена {price_val:,} >= рынок {market_avg:,}): {listing.get('title', '')}")
@@ -185,40 +271,8 @@ def analyze_listing(listing: dict) -> dict:
             f"срок {model_stats['avg_days']} дней"
         )
 
-    # ── Вызов DeepSeek API ────────────────────────────────────────────────
-    full_text = ""
-    # Пропускаем вызов если DeepSeek отключён (например, 402 Insufficient Balance)
-    if not RUNTIME_CONFIG.get("DEEPSEEK_DISABLED"):
-        time.sleep(2)
-        try:
-            client = OpenAI(
-                api_key=RUNTIME_CONFIG.get("DEEPSEEK_API_KEY", ""),
-                base_url="https://api.deepseek.com",
-            )
-            response = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_msg},
-                ],
-                max_tokens=1000,
-            )
-            full_text = response.choices[0].message.content or ""
-            RUNTIME_CONFIG["LLM_FAIL_STREAK"] = 0  # успех — сброс счётчика
-        except Exception as e:
-            err_str = str(e)
-            logging.error(f"DeepSeek error: {e}")
-            full_text = f"Ошибка анализа: {e}"
-            # 402 = кончился баланс — отключаем DeepSeek до перезапуска
-            if "402" in err_str or "Insufficient Balance" in err_str:
-                RUNTIME_CONFIG["DEEPSEEK_DISABLED"] = True
-                _notify_llm_down()
-                logging.warning("DeepSeek отключён: 402 Insufficient Balance — пополните счёт на deepseek.com")
-            else:
-                streak = RUNTIME_CONFIG.get("LLM_FAIL_STREAK", 0) + 1
-                RUNTIME_CONFIG["LLM_FAIL_STREAK"] = streak
-                if streak == 10:
-                    _notify_llm_down()
+    # ── Вызов LLM (Groq → DeepSeek → локальный скоринг) ──────────────────
+    full_text, used_provider = get_llm_response(system_prompt, user_msg)
 
     # ── Парсинг DCB Score и вердикта ──────────────────────────────────────
     dcb_score = 0
@@ -232,18 +286,18 @@ def analyze_listing(listing: dict) -> dict:
         if verdict_match:
             verdict = verdict_match.group(1).strip()
     except Exception as e:
-        logging.error(f"Ошибка парсинга ответа DeepSeek: {e}")
+        logging.error(f"Ошибка парсинга ответа LLM: {e}")
 
-    # DeepSeek вернул пустой ответ — считаем score локально чтобы не потерять объявление
+    # Все LLM недоступны — локальный скоринг как последний резерв
     if dcb_score == 0 and (not full_text.strip() or full_text.startswith("Ошибка")):
         underval = market.get("undervaluation_pct", 0)
         fraud_penalty = fraud.get("risk_score", 0)
         motivation_bonus = min(seller.get("motivation_score", 0) // 2, 20)
         dcb_score = int(40 + underval * 0.8 + motivation_bonus - fraud_penalty * 0.4)
-        verdict = f"Локальная оценка (DeepSeek недоступен): недооценка {underval}%, риск {fraud_penalty}/100"
-        logging.warning(f"DeepSeek недоступен — локальный score: {dcb_score}/100 для {listing_id}")
+        verdict = f"Локальная оценка (LLM недоступен): недооценка {underval}%, риск {fraud_penalty}/100"
+        logging.warning(f"Все LLM недоступны — локальный score: {dcb_score}/100 для {listing_id}")
 
-    # Штраф за перекупщика (применяется поверх оценки DeepSeek)
+    # Штраф за перекупщика (применяется поверх оценки LLM)
     if seller["reseller_probability"] >= 70:
         dcb_score -= 15
 
@@ -265,6 +319,7 @@ def analyze_listing(listing: dict) -> dict:
             visual_ok = vision["visual_ok"]
         except Exception as e:
             logging.error(f"Vision интеграция: {e}")
+
     # Причина отказа — формируется для логирования пропущенных объявлений
     reject_reasons = []
     if seller.get("reseller_probability", 0) >= 70:
@@ -282,6 +337,7 @@ def analyze_listing(listing: dict) -> dict:
         "verdict": verdict,
         "full_analysis": full_text,
         "reject_reason": reject_reason,
+        "used_provider": used_provider,
         "listing": listing,
         "market": market,
         "seller": seller,
