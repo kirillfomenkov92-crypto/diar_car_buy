@@ -187,29 +187,38 @@ def analyze_listing(listing: dict) -> dict:
 
     # ── Вызов DeepSeek API ────────────────────────────────────────────────
     full_text = ""
-    time.sleep(2)
-    try:
-        client = OpenAI(
-            api_key=RUNTIME_CONFIG.get("DEEPSEEK_API_KEY", ""),
-            base_url="https://api.deepseek.com",
-        )
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_msg},
-            ],
-            max_tokens=1000,
-        )
-        full_text = response.choices[0].message.content or ""
-        RUNTIME_CONFIG["LLM_FAIL_STREAK"] = 0  # успех — сброс счётчика
-    except Exception as e:
-        logging.error(f"DeepSeek error: {e}")
-        full_text = f"Ошибка анализа: {e}"
-        streak = RUNTIME_CONFIG.get("LLM_FAIL_STREAK", 0) + 1
-        RUNTIME_CONFIG["LLM_FAIL_STREAK"] = streak
-        if streak == 10:
-            _notify_llm_down()
+    # Пропускаем вызов если DeepSeek отключён (например, 402 Insufficient Balance)
+    if not RUNTIME_CONFIG.get("DEEPSEEK_DISABLED"):
+        time.sleep(2)
+        try:
+            client = OpenAI(
+                api_key=RUNTIME_CONFIG.get("DEEPSEEK_API_KEY", ""),
+                base_url="https://api.deepseek.com",
+            )
+            response = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+                max_tokens=1000,
+            )
+            full_text = response.choices[0].message.content or ""
+            RUNTIME_CONFIG["LLM_FAIL_STREAK"] = 0  # успех — сброс счётчика
+        except Exception as e:
+            err_str = str(e)
+            logging.error(f"DeepSeek error: {e}")
+            full_text = f"Ошибка анализа: {e}"
+            # 402 = кончился баланс — отключаем DeepSeek до перезапуска
+            if "402" in err_str or "Insufficient Balance" in err_str:
+                RUNTIME_CONFIG["DEEPSEEK_DISABLED"] = True
+                _notify_llm_down()
+                logging.warning("DeepSeek отключён: 402 Insufficient Balance — пополните счёт на deepseek.com")
+            else:
+                streak = RUNTIME_CONFIG.get("LLM_FAIL_STREAK", 0) + 1
+                RUNTIME_CONFIG["LLM_FAIL_STREAK"] = streak
+                if streak == 10:
+                    _notify_llm_down()
 
     # ── Парсинг DCB Score и вердикта ──────────────────────────────────────
     dcb_score = 0
