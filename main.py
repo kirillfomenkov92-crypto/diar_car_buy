@@ -20,6 +20,7 @@ from database import (
 from analyzer import analyze_listing
 from notifier import send_notification
 from bot_commands import get_command_handlers
+from bot_interface import get_interface_handlers
 from speed_monitor import calculate_listing_age_minutes
 from utils.watchdog import record_heartbeat, health_check
 
@@ -275,6 +276,9 @@ async def run():
 
     token = cfg.get("TELEGRAM_BOT_TOKEN", "")
     app = ApplicationBuilder().token(token).build()
+
+    for handler in get_interface_handlers():
+        app.add_handler(handler)
 
     for cmd, handler in get_command_handlers():
         app.add_handler(CommandHandler(cmd, handler))
