@@ -1,4 +1,4 @@
-# notifier.py — отправка уведомлений в Telegram для Diar Car Buy AI v3.0.
+# notifier.py — отправка уведомлений в Telegram для Diar Car Buy AI v5.0.
 
 import logging
 import time
@@ -109,7 +109,8 @@ def send_notification(result: dict):
                 footer_parts.append(f"💬 \"{strategy.get('call_script', '')}\"")
             footer_parts.append(f"⏱ {result.get('urgency_label', '')}")
             footer_parts.append(f"🔗 {listing.get('listing_url', '')}")
-            text = f"{header}{body}\n\n{'\n'.join(footer_parts)}"
+            footer_str = "\n".join(footer_parts)
+            text = f"{header}{body}\n\n{footer_str}"
 
         # Разбивка на части (4000 символов — лимит Telegram)
         parts = [text[i:i + MAX_MESSAGE_LEN] for i in range(0, len(text), MAX_MESSAGE_LEN)]

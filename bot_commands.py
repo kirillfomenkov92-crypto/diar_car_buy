@@ -30,7 +30,11 @@ def authorized_only(func):
             return
         return await func(update, context)
     return wrapper
+import sqlite3
+import json
+
 from database import (
+    DB_PATH,
     get_today_stats, get_top5_today, get_today_analyzed, get_deals_stats,
     add_deal, close_deal, get_active_arbitrage,
     get_speed_stats, get_source_stats,
@@ -458,8 +462,6 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/history — объявления у которых цена менялась (мотивированные продавцы)."""
     try:
-        import sqlite3, json
-        from database import DB_PATH
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         rows = conn.execute("""
@@ -489,7 +491,7 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 url     = r["listing_url"] or ""
                 lines.append(
                     f"🔻 {title[:35]}\n"
-                    f"   {first_p:,} → {last_p:,} ₽ (-{drop:,} ₽, {changes} раз)\n"
+                    f"   {_fmt(first_p)} → {_fmt(last_p)} ₽ (-{_fmt(drop)} ₽, {changes} раз)\n"
                     f"   {url}"
                 )
             except Exception:
@@ -504,8 +506,6 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_calibrate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/calibrate — самокалибровка на основе реальных сделок."""
     try:
-        import sqlite3
-        from database import DB_PATH
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
 

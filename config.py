@@ -1,4 +1,4 @@
-# config.py — загрузка и хранение конфигурации Diar Car Buy AI v3.0.
+# config.py — загрузка и хранение конфигурации Diar Car Buy AI v5.0.
 
 import logging
 import yaml
