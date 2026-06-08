@@ -146,7 +146,7 @@ def parse() -> list:
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
-    thread.join(timeout=10)
+    thread.join(timeout=30)
 
     if thread.is_alive():
         logging.warning("TG парсер завис — пропускаем цикл")

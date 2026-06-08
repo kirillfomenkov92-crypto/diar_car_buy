@@ -1,5 +1,5 @@
-# main.py — точка входа Diar Car Buy AI v3.0.
-# Два планировщика: fast_cycle (каждую минуту, RSS) + monitor_cycle (каждые 15 мин, все источники).
+# main.py — точка входа Diar Car Buy AI v5.0.
+# Два планировщика: fast_cycle + monitor_cycle (интервалы из конфига).
 
 import asyncio
 import io

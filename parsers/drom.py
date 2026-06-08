@@ -248,13 +248,3 @@ def parse() -> list:
     logging.info(f"Drom итого: {len(results)} новых объявлений")
     return results
 
-
-# Устаревшие функции — оставлены для обратной совместимости
-def _parse_link_item(link_el, city: str, is_regional: bool) -> dict | None:
-    """Deprecated: использовался для curl_cffi <a href> парсинга."""
-    return None
-
-
-def _parse_item(item, city: str, is_regional: bool) -> dict | None:
-    """Deprecated: старый BeautifulSoup парсер."""
-    return None

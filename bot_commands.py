@@ -1,4 +1,4 @@
-# bot_commands.py — обработчики команд Telegram-бота Diar Car Buy AI v3.0.
+# bot_commands.py — обработчики команд Telegram-бота Diar Car Buy AI v5.0.
 # python-telegram-bot v20+ async. Красивое форматирование всех ответов.
 
 import re
@@ -407,7 +407,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (
             f"Статус Diar Car Buy AI\n"
             f"{LINE}\n"
-            f"Авито RSS:        {_ago('AVITO_RSS_LAST')}, {rss_cnt} объявлений — {_blocked('AVITO_CURL_BLOCKED_UNTIL')}\n"
+            f"Авито RSS:        {_ago('AVITO_RSS_LAST')}, {rss_cnt} объявлений — {_blocked('AVITO_RSS_BLOCKED_UNTIL')}\n"
             f"Авито curl:       {_ago('AVITO_CURL_LAST')}, {curl_cnt} объявлений — {_blocked('AVITO_CURL_BLOCKED_UNTIL')}\n"
             f"Авито Playwright: {_ago('AVITO_PLAYWRIGHT_LAST')} — {_blocked('AVITO_STEALTH_BLOCKED_UNTIL')}\n"
             f"{LINE}\n"
@@ -529,9 +529,12 @@ async def cmd_calibrate(update: Update, context: ContextTypes.DEFAULT_TYPE):
             GROUP BY model ORDER BY AVG(roi) DESC
         """).fetchall()
 
-        avg_score = conn.execute(
-            "SELECT AVG(dcb_score_at_buy) FROM deals WHERE status='closed'"
-        ).fetchone()[0] or 0
+        try:
+            avg_score = conn.execute(
+                "SELECT AVG(dcb_score_at_buy) FROM deals WHERE status='closed' AND dcb_score_at_buy > 0"
+            ).fetchone()[0] or 0
+        except Exception:
+            avg_score = 0
 
         avg_days_real = conn.execute(
             "SELECT AVG(days_held) FROM deals WHERE status='closed'"
@@ -540,14 +543,17 @@ async def cmd_calibrate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
 
         min_score = RUNTIME_CONFIG.get("MIN_DCB_SCORE", 80)
-        score_gap  = int(avg_score) - min_score
         rec = ""
-        if score_gap < -5:
-            rec = f"Твой реальный порог ~{int(avg_score)}, в боте {min_score} — повысь порог"
-        elif score_gap > 10:
-            rec = f"Твой реальный порог ~{int(avg_score)}, в боте {min_score} — можно снизить"
+        if avg_score > 0:
+            score_gap = int(avg_score) - min_score
+            if score_gap < -5:
+                rec = f"Твой реальный порог ~{int(avg_score)}, в боте {min_score} — повысь порог"
+            elif score_gap > 10:
+                rec = f"Твой реальный порог ~{int(avg_score)}, в боте {min_score} — можно снизить"
+            else:
+                rec = "Порог настроен оптимально"
         else:
-            rec = "Порог настроен оптимально"
+            rec = "Недостаточно данных для калибровки порога"
 
         lines = [f"🎯 КАЛИБРОВКА\n{LINE}"]
         lines.append(f"Сделок закрыто: {total}")

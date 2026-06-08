@@ -64,6 +64,7 @@ def _migrate_db(conn):
         "ALTER TABLE deals ADD COLUMN buy_city TEXT",
         "ALTER TABLE deals ADD COLUMN source TEXT",
         "ALTER TABLE daily_stats ADD COLUMN fastest_alert_minutes INTEGER",
+        "ALTER TABLE deals ADD COLUMN dcb_score_at_buy INTEGER DEFAULT 0",
     ]
     for sql in migrations:
         try:
@@ -111,19 +112,20 @@ def init_db():
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS deals (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                description TEXT,
-                model       TEXT,
-                buy_price   INTEGER,
-                buy_city    TEXT,
-                buy_date    TEXT,
-                sell_price  INTEGER,
-                sell_date   TEXT,
-                profit      INTEGER,
-                days_held   INTEGER,
-                roi         REAL,
-                source      TEXT,
-                status      TEXT DEFAULT 'open'
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                description       TEXT,
+                model             TEXT,
+                buy_price         INTEGER,
+                buy_city          TEXT,
+                buy_date          TEXT,
+                sell_price        INTEGER,
+                sell_date         TEXT,
+                profit            INTEGER,
+                days_held         INTEGER,
+                roi               REAL,
+                source            TEXT,
+                status            TEXT DEFAULT 'open',
+                dcb_score_at_buy  INTEGER DEFAULT 0
             )
         """)
 
