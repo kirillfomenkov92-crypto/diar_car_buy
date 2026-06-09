@@ -46,7 +46,7 @@ def parse() -> list:
         logging.error("Auto.ru: curl_cffi не установлен — pip install curl_cffi")
         return []
 
-    max_price = RUNTIME_CONFIG.get("MAX_PRICE", 150000)
+    max_price = RUNTIME_CONFIG.get("MAX_PRICE", 140000)
     session = CurlSession(impersonate="chrome124")
     _load_autoru_cookies(session)
 

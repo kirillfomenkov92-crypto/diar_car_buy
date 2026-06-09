@@ -59,7 +59,7 @@ def send_notification(result: dict):
 
         # Финальная проверка цены — блокируем уведомления дороже бюджета
         price = listing.get("price", 0)
-        max_price = RUNTIME_CONFIG.get("MAX_PRICE", 150000)
+        max_price = RUNTIME_CONFIG.get("MAX_PRICE", 140000)
         if price > max_price:
             logging.warning(
                 f"Блокировка уведомления: цена {price:,} > MAX_PRICE {max_price:,} "

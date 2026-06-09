@@ -37,7 +37,7 @@ def check_arbitrage(listing: dict) -> dict | None:
     Работает только с региональными объявлениями Drom (is_regional=True).
     """
     try:
-        max_price = RUNTIME_CONFIG.get("MAX_PRICE", 150000)
+        max_price = RUNTIME_CONFIG.get("MAX_PRICE", 140000)
         if listing.get("price", 0) > max_price:
             return None
 

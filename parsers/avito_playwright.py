@@ -144,7 +144,7 @@ async def parse_async() -> list:
         logging.info(f"Avito Stealth: пауза ещё {mins} мин")
         return []
 
-    max_price = RUNTIME_CONFIG.get("MAX_PRICE", 150000)
+    max_price = RUNTIME_CONFIG.get("MAX_PRICE", 140000)
     url = AVITO_URL.format(max_price=max_price)
     results = []
 

@@ -57,7 +57,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🚗 Diar Car Buy AI v5.0 запущен!\n"
             f"{LINE}\n"
             "📡 Источники мониторинга:\n"
-            f"  • Avito — каждые {RUNTIME_CONFIG.get('FAST_CHECK_INTERVAL', 20)} минут\n"
+            f"  • Avito — каждые {RUNTIME_CONFIG.get('FAST_CHECK_INTERVAL', 1)} минут\n"
             "  • Drom — Москва + регионы (арбитраж)\n"
             "  • Auto.ru — только частные\n"
             "  • Youla — меньше конкуренции\n"
@@ -403,7 +403,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rss_cnt   = RUNTIME_CONFIG.get("AVITO_RSS_LAST_COUNT", "—")
         curl_cnt  = RUNTIME_CONFIG.get("AVITO_CURL_LAST_COUNT", "—")
         paused    = RUNTIME_CONFIG.get("PAUSED", False)
-        min_interval = RUNTIME_CONFIG.get("AVITO_MIN_INTERVAL_SECONDS", 180)
+        min_interval = RUNTIME_CONFIG.get("AVITO_MIN_INTERVAL_SECONDS", 90)
 
         text = (
             f"Статус Diar Car Buy AI\n"

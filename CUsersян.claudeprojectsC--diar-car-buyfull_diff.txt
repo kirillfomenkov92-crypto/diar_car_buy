@@ -1,0 +1,1050 @@
+diff --git a/analyzer.py b/analyzer.py
+index bf8eb56..a369413 100644
+--- a/analyzer.py
++++ b/analyzer.py
+@@ -1,4 +1,4 @@
+-# analyzer.py — главный анализатор: синтез всех модулей + DeepSeek API.
++# analyzer.py — главный анализатор: синтез всех модулей + LLM fallback цепочка.
+ 
+ import re
+ import time
+@@ -26,9 +26,28 @@ MONTH_NAMES = [
+     "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+ ]
+ 
++# Цепочка провайдеров: Groq (бесплатный) → DeepSeek (платный) → локальный скоринг
++LLM_PROVIDERS = [
++    {
++        "name": "groq",
++        "key_config": "GROQ_API_KEY",
++        "base_url": "https://api.groq.com/openai/v1",
++        "model": "llama-3.3-70b-versatile",
++        "disabled_flag": "GROQ_DISABLED",
++        "error_codes": [429, 402, 401],
++    },
++    {
++        "name": "deepseek",
++        "key_config": "DEEPSEEK_API_KEY",
++        "base_url": "https://api.deepseek.com",
++        "model": "deepseek-chat",
++        "disabled_flag": "DEEPSEEK_DISABLED",
++        "error_codes": [402, 401],
++    },
++]
++
+ 
+ def _read_system_prompt() -> str:
+-    """Прочитать системный промпт из файла."""
+     try:
+         with open(SYSTEM_PROMPT_PATH, encoding="utf-8") as f:
+             return f.read()
+@@ -37,15 +56,14 @@ def _read_system_prompt() -> str:
+         return ""
+ 
+ 
+-def _notify_llm_down():
+-    """Уведомить админов один раз о 10 ошибках DeepSeek подряд."""
++def _notify_llm_down(provider_name: str = "LLM"):
+     token = RUNTIME_CONFIG.get("TELEGRAM_BOT_TOKEN", "")
+     chat_id = RUNTIME_CONFIG.get("TELEGRAM_CHAT_ID", "")
+     if not token or not chat_id:
+         return
+     text = (
+-        "⚠️ DeepSeek не отвечает 10 раз подряд — возможно лимит ключа исчерпан.\n"
+-        "Бот использует локальный анализ."
++        f"⚠️ {provider_name} недоступен (нет баланса или ключ неверный).\n"
++        "Бот автоматически переключился на следующий провайдер."
+     )
+     try:
+         requests.post(
+@@ -53,24 +71,92 @@ def _notify_llm_down():
+             json={"chat_id": chat_id, "text": text},
+             timeout=10,
+         )
+-        logging.warning("DeepSeek down: уведомление отправлено админам")
++        logging.warning(f"{provider_name} down: уведомление отправлено админам")
+     except Exception as e:
+-        logging.error(f"Не удалось отправить уведомление о DeepSeek: {e}")
++        logging.error(f"Не удалось отправить уведомление о {provider_name}: {e}")
+ 
+ 
+ def _fmt(n) -> str:
+-    """Форматировать число с пробелами (10 000 ₽)."""
+     try:
+         return f"{int(n):,}".replace(",", " ")
+     except Exception:
+         return str(n)
+ 
+ 
++def _try_provider(provider: dict, system_prompt: str, user_msg: str) -> str | None:
++    """Пробует один LLM-провайдер. При 429 — пауза 30 сек и одна повторная попытка."""
++    name = provider["name"]
++    api_key = RUNTIME_CONFIG.get(provider["key_config"], "")
++    if not api_key:
++        return None
++
++    for attempt in range(2):
++        try:
++            client = OpenAI(api_key=api_key, base_url=provider["base_url"])
++            response = client.chat.completions.create(
++                model=provider["model"],
++                messages=[
++                    {"role": "system", "content": system_prompt},
++                    {"role": "user", "content": user_msg},
++                ],
++                max_tokens=1000,
++                timeout=30,
++            )
++            return response.choices[0].message.content or ""
++        except Exception as e:
++            err_str = str(e)
++            # 429 rate limit — одна повторная попытка через 30 сек
++            if "429" in err_str and attempt == 0:
++                logging.warning(f"LLM {name}: 429 rate limit — пауза 30 сек")
++                time.sleep(30)
++                continue
++            # 402 нет баланса — отключаем провайдер
++            if "402" in err_str or "Insufficient Balance" in err_str:
++                RUNTIME_CONFIG[provider["disabled_flag"]] = True
++                _notify_llm_down(name)
++                logging.warning(f"LLM {name}: 402 — отключён, пополните баланс")
++            # 401 неверный ключ — отключаем провайдер
++            elif "401" in err_str or "Unauthorized" in err_str or "Invalid API key" in err_str:
++                RUNTIME_CONFIG[provider["disabled_flag"]] = True
++                logging.warning(f"LLM {name}: 401 — неверный ключ, отключён")
++            else:
++                logging.error(f"LLM {name} ошибка: {e}")
++            return None
++
++    return None
++
++
++def get_llm_response(system_prompt: str, user_msg: str) -> tuple[str, str]:
++    """Пробует провайдеров по цепочке Groq → DeepSeek.
++    Возвращает (текст_ответа, имя_провайдера) или ('', '') если все недоступны."""
++    for i, provider in enumerate(LLM_PROVIDERS):
++        if RUNTIME_CONFIG.get(provider["disabled_flag"]):
++            continue
++        if not RUNTIME_CONFIG.get(provider["key_config"]):
++            continue
++
++        name = provider["name"]
++        result = _try_provider(provider, system_prompt, user_msg)
++        if result:
++            return result, name
++
++        # Этот провайдер не ответил — находим следующего и логируем переключение
++        remaining = [
++            p for p in LLM_PROVIDERS[i + 1:]
++            if not RUNTIME_CONFIG.get(p["disabled_flag"])
++            and RUNTIME_CONFIG.get(p["key_config"])
++        ]
++        if remaining:
++            logging.warning(f"LLM переключился: {name} → {remaining[0]['name']}")
++
++    return "", ""
++
++
+ def analyze_listing(listing: dict) -> dict:
+     """
+     Главный анализатор объявления.
+     Синтезирует рыночный анализ, профиль продавца, детектор фрода,
+-    стратегию сделки, арбитраж и DeepSeek API (deepseek-chat).
++    стратегию сделки, арбитраж и LLM (Groq → DeepSeek → локальный).
+     Возвращает полный dict с dcb_score, verdict, full_analysis и всеми модулями.
+     """
+     load_config()
+@@ -112,7 +198,7 @@ def analyze_listing(listing: dict) -> dict:
+     price_val = listing.get("price") or 0
+     mileage_val = listing.get("mileage") or 0
+ 
+-    # ── Предфильтр: цена выше рынка → не тратим Groq ─────────────────────
++    # ── Предфильтр: цена выше рынка → не тратим LLM ──────────────────────
+     market_avg = market.get("market_avg", 0)
+     if market_avg > 0 and price_val > market_avg * 1.05:
+         logging.info(f"Пропущено (цена {price_val:,} >= рынок {market_avg:,}): {listing.get('title', '')}")
+@@ -185,31 +271,8 @@ def analyze_listing(listing: dict) -> dict:
+             f"срок {model_stats['avg_days']} дней"
+         )
+ 
+-    # ── Вызов DeepSeek API ────────────────────────────────────────────────
+-    full_text = ""
+-    time.sleep(2)
+-    try:
+-        client = OpenAI(
+-            api_key=RUNTIME_CONFIG.get("DEEPSEEK_API_KEY", ""),
+-            base_url="https://api.deepseek.com",
+-        )
+-        response = client.chat.completions.create(
+-            model="deepseek-chat",
+-            messages=[
+-                {"role": "system", "content": system_prompt},
+-                {"role": "user", "content": user_msg},
+-            ],
+-            max_tokens=1000,
+-        )
+-        full_text = response.choices[0].message.content or ""
+-        RUNTIME_CONFIG["LLM_FAIL_STREAK"] = 0  # успех — сброс счётчика
+-    except Exception as e:
+-        logging.error(f"DeepSeek error: {e}")
+-        full_text = f"Ошибка анализа: {e}"
+-        streak = RUNTIME_CONFIG.get("LLM_FAIL_STREAK", 0) + 1
+-        RUNTIME_CONFIG["LLM_FAIL_STREAK"] = streak
+-        if streak == 10:
+-            _notify_llm_down()
++    # ── Вызов LLM (Groq → DeepSeek → локальный скоринг) ──────────────────
++    full_text, used_provider = get_llm_response(system_prompt, user_msg)
+ 
+     # ── Парсинг DCB Score и вердикта ──────────────────────────────────────
+     dcb_score = 0
+@@ -223,18 +286,18 @@ def analyze_listing(listing: dict) -> dict:
+         if verdict_match:
+             verdict = verdict_match.group(1).strip()
+     except Exception as e:
+-        logging.error(f"Ошибка парсинга ответа DeepSeek: {e}")
++        logging.error(f"Ошибка парсинга ответа LLM: {e}")
+ 
+-    # DeepSeek вернул пустой ответ — считаем score локально чтобы не потерять объявление
++    # Все LLM недоступны — локальный скоринг как последний резерв
+     if dcb_score == 0 and (not full_text.strip() or full_text.startswith("Ошибка")):
+         underval = market.get("undervaluation_pct", 0)
+         fraud_penalty = fraud.get("risk_score", 0)
+         motivation_bonus = min(seller.get("motivation_score", 0) // 2, 20)
+         dcb_score = int(40 + underval * 0.8 + motivation_bonus - fraud_penalty * 0.4)
+-        verdict = f"Локальная оценка (DeepSeek недоступен): недооценка {underval}%, риск {fraud_penalty}/100"
+-        logging.warning(f"DeepSeek недоступен — локальный score: {dcb_score}/100 для {listing_id}")
++        verdict = f"Локальная оценка (LLM недоступен): недооценка {underval}%, риск {fraud_penalty}/100"
++        logging.warning(f"Все LLM недоступны — локальный score: {dcb_score}/100 для {listing_id}")
+ 
+-    # Штраф за перекупщика (применяется поверх оценки DeepSeek)
++    # Штраф за перекупщика (применяется поверх оценки LLM)
+     if seller["reseller_probability"] >= 70:
+         dcb_score -= 15
+ 
+@@ -256,6 +319,7 @@ def analyze_listing(listing: dict) -> dict:
+             visual_ok = vision["visual_ok"]
+         except Exception as e:
+             logging.error(f"Vision интеграция: {e}")
++
+     # Причина отказа — формируется для логирования пропущенных объявлений
+     reject_reasons = []
+     if seller.get("reseller_probability", 0) >= 70:
+@@ -273,6 +337,7 @@ def analyze_listing(listing: dict) -> dict:
+         "verdict": verdict,
+         "full_analysis": full_text,
+         "reject_reason": reject_reason,
++        "used_provider": used_provider,
+         "listing": listing,
+         "market": market,
+         "seller": seller,
+diff --git a/bot_commands.py b/bot_commands.py
+index bd6ca57..b65d26c 100644
+--- a/bot_commands.py
++++ b/bot_commands.py
+@@ -1,4 +1,4 @@
+-# bot_commands.py — обработчики команд Telegram-бота Diar Car Buy AI v3.0.
++# bot_commands.py — обработчики команд Telegram-бота Diar Car Buy AI v5.0.
+ # python-telegram-bot v20+ async. Красивое форматирование всех ответов.
+ 
+ import re
+@@ -30,7 +30,11 @@ def authorized_only(func):
+             return
+         return await func(update, context)
+     return wrapper
++import sqlite3
++import json
++
+ from database import (
++    DB_PATH,
+     get_today_stats, get_top5_today, get_today_analyzed, get_deals_stats,
+     add_deal, close_deal, get_active_arbitrage,
+     get_speed_stats, get_source_stats,
+@@ -56,7 +60,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+             "🚗 Diar Car Buy AI v5.0 запущен!\n"
+             f"{LINE}\n"
+             "📡 Источники мониторинга:\n"
+-            "  • Avito — каждые 15 минут\n"
++            f"  • Avito — каждые {RUNTIME_CONFIG.get('FAST_CHECK_INTERVAL', 20)} минут\n"
+             "  • Drom — Москва + регионы (арбитраж)\n"
+             "  • Auto.ru — только частные\n"
+             "  • Youla — меньше конкуренции\n"
+@@ -407,7 +411,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+         text = (
+             f"Статус Diar Car Buy AI\n"
+             f"{LINE}\n"
+-            f"Авито RSS:        {_ago('AVITO_RSS_LAST')}, {rss_cnt} объявлений — {_blocked('AVITO_CURL_BLOCKED_UNTIL')}\n"
++            f"Авито RSS:        {_ago('AVITO_RSS_LAST')}, {rss_cnt} объявлений — {_blocked('AVITO_RSS_BLOCKED_UNTIL')}\n"
+             f"Авито curl:       {_ago('AVITO_CURL_LAST')}, {curl_cnt} объявлений — {_blocked('AVITO_CURL_BLOCKED_UNTIL')}\n"
+             f"Авито Playwright: {_ago('AVITO_PLAYWRIGHT_LAST')} — {_blocked('AVITO_STEALTH_BLOCKED_UNTIL')}\n"
+             f"{LINE}\n"
+@@ -458,8 +462,6 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+     """/history — объявления у которых цена менялась (мотивированные продавцы)."""
+     try:
+-        import sqlite3, json
+-        from database import DB_PATH
+         conn = sqlite3.connect(DB_PATH)
+         conn.row_factory = sqlite3.Row
+         rows = conn.execute("""
+@@ -489,7 +491,7 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+                 url     = r["listing_url"] or ""
+                 lines.append(
+                     f"🔻 {title[:35]}\n"
+-                    f"   {first_p:,} → {last_p:,} ₽ (-{drop:,} ₽, {changes} раз)\n"
++                    f"   {_fmt(first_p)} → {_fmt(last_p)} ₽ (-{_fmt(drop)} ₽, {changes} раз)\n"
+                     f"   {url}"
+                 )
+             except Exception:
+@@ -504,8 +506,6 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+ async def cmd_calibrate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+     """/calibrate — самокалибровка на основе реальных сделок."""
+     try:
+-        import sqlite3
+-        from database import DB_PATH
+         conn = sqlite3.connect(DB_PATH)
+         conn.row_factory = sqlite3.Row
+ 
+@@ -529,9 +529,12 @@ async def cmd_calibrate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+             GROUP BY model ORDER BY AVG(roi) DESC
+         """).fetchall()
+ 
+-        avg_score = conn.execute(
+-            "SELECT AVG(dcb_score_at_buy) FROM deals WHERE status='closed'"
+-        ).fetchone()[0] or 0
++        try:
++            avg_score = conn.execute(
++                "SELECT AVG(dcb_score_at_buy) FROM deals WHERE status='closed' AND dcb_score_at_buy > 0"
++            ).fetchone()[0] or 0
++        except Exception:
++            avg_score = 0
+ 
+         avg_days_real = conn.execute(
+             "SELECT AVG(days_held) FROM deals WHERE status='closed'"
+@@ -540,14 +543,17 @@ async def cmd_calibrate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+         conn.close()
+ 
+         min_score = RUNTIME_CONFIG.get("MIN_DCB_SCORE", 80)
+-        score_gap  = int(avg_score) - min_score
+         rec = ""
+-        if score_gap < -5:
+-            rec = f"Твой реальный порог ~{int(avg_score)}, в боте {min_score} — повысь порог"
+-        elif score_gap > 10:
+-            rec = f"Твой реальный порог ~{int(avg_score)}, в боте {min_score} — можно снизить"
++        if avg_score > 0:
++            score_gap = int(avg_score) - min_score
++            if score_gap < -5:
++                rec = f"Твой реальный порог ~{int(avg_score)}, в боте {min_score} — повысь порог"
++            elif score_gap > 10:
++                rec = f"Твой реальный порог ~{int(avg_score)}, в боте {min_score} — можно снизить"
++            else:
++                rec = "Порог настроен оптимально"
+         else:
+-            rec = "Порог настроен оптимально"
++            rec = "Недостаточно данных для калибровки порога"
+ 
+         lines = [f"🎯 КАЛИБРОВКА\n{LINE}"]
+         lines.append(f"Сделок закрыто: {total}")
+diff --git a/bot_interface.py b/bot_interface.py
+index 92edc43..c403ca9 100644
+--- a/bot_interface.py
++++ b/bot_interface.py
+@@ -471,8 +471,13 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+         elif data.startswith("bi_sc_"):
+             st = _state(uid)
+             st["condition"] = data[len("bi_sc_"):]
++            cond = st["condition"] if st["condition"] != "any" else None
++            f = _filters(uid)
+             items = search_listings(brand=st.get("brand"),
+                                     max_price=st.get("max_price"),
++                                    condition=cond,
++                                    year_from=f.get("year_from"),
++                                    owners_only=f.get("owners_only", False),
+                                     min_score=0, limit=5)
+             await _deliver(q, items, TEXTS["search_header"])
+ 
+@@ -485,8 +490,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+         elif data.startswith("bi_cp_"):
+             st = _state(uid)
+             st["max_price"] = int(data[len("bi_cp_"):])
++            f = _filters(uid)
+             items = search_listings(country=st.get("country"),
+                                     max_price=st.get("max_price"),
++                                    year_from=f.get("year_from"),
++                                    owners_only=f.get("owners_only", False),
+                                     min_score=0, limit=5)
+             await _deliver(q, items, TEXTS["country_header"])
+ 
+diff --git a/config.py b/config.py
+index a1685a3..eec5a04 100644
+--- a/config.py
++++ b/config.py
+@@ -1,4 +1,4 @@
+-# config.py — загрузка и хранение конфигурации Diar Car Buy AI v3.0.
++# config.py — загрузка и хранение конфигурации Diar Car Buy AI v5.0.
+ 
+ import logging
+ import yaml
+@@ -27,7 +27,7 @@ def load_config() -> dict:
+         from dotenv import load_dotenv
+         import os
+         load_dotenv()
+-        for key in ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "GEMINI_API_KEY", "DEEPSEEK_API_KEY"]:
++        for key in ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "GEMINI_API_KEY", "GROQ_API_KEY", "DEEPSEEK_API_KEY"]:
+             env_val = os.getenv(key)
+             if env_val:
+                 RUNTIME_CONFIG[key] = env_val
+diff --git a/config.yaml.example b/config.yaml.example
+index 21008f7..7c2acea 100644
+--- a/config.yaml.example
++++ b/config.yaml.example
+@@ -6,11 +6,14 @@
+ TELEGRAM_BOT_TOKEN: ""      # токен от @BotFather
+ TELEGRAM_CHAT_ID: ""        # ваш chat id
+ GEMINI_API_KEY: ""          # ключ Google AI Studio
+-GROQ_API_KEY: ""            # ключ Groq (опционально)
++GROQ_API_KEY: ""            # ключ Groq — основной LLM (бесплатный, console.groq.com)
++DEEPSEEK_API_KEY: ""        # ключ DeepSeek — резервный LLM (платный, platform.deepseek.com)
+ VK_ACCESS_TOKEN: ""         # токен VK API (опционально)
+ TG_API_ID: ""               # api_id с my.telegram.org (опционально)
+ TG_API_HASH: ""             # api_hash с my.telegram.org (опционально)
+ 
++LLM_PROVIDER: groq          # основной провайдер LLM: groq | deepseek
++
+ MAX_PRICE: 140000           # бюджет, ₽
+ MIN_DCB_SCORE: 70           # порог уведомления
+ CHECK_INTERVAL_MINUTES: 15  # интервал проверки, мин
+diff --git a/database.py b/database.py
+index 3a99e62..00eb015 100644
+--- a/database.py
++++ b/database.py
+@@ -1,4 +1,4 @@
+-# database.py — слой работы с SQLite для Diar Car Buy AI v3.0.
++# database.py — слой работы с SQLite для Diar Car Buy AI v5.0.
+ # 6 таблиц: seen_listings, market_data, deals, daily_stats,
+ #           seller_history, arbitrage_opportunities.
+ 
+@@ -64,6 +64,9 @@ def _migrate_db(conn):
+         "ALTER TABLE deals ADD COLUMN buy_city TEXT",
+         "ALTER TABLE deals ADD COLUMN source TEXT",
+         "ALTER TABLE daily_stats ADD COLUMN fastest_alert_minutes INTEGER",
++        "ALTER TABLE deals ADD COLUMN dcb_score_at_buy INTEGER DEFAULT 0",
++        "ALTER TABLE seen_listings ADD COLUMN year INTEGER DEFAULT 0",
++        "ALTER TABLE seen_listings ADD COLUMN seller_ads_count INTEGER DEFAULT 0",
+     ]
+     for sql in migrations:
+         try:
+@@ -92,6 +95,8 @@ def init_db():
+                 last_dcb_score        INTEGER,
+                 last_notified         TEXT,
+                 response_time_minutes INTEGER,
++                year                  INTEGER DEFAULT 0,
++                seller_ads_count      INTEGER DEFAULT 0,
+                 UNIQUE(listing_id, source)
+             )
+         """)
+@@ -111,19 +116,20 @@ def init_db():
+ 
+         cur.execute("""
+             CREATE TABLE IF NOT EXISTS deals (
+-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+-                description TEXT,
+-                model       TEXT,
+-                buy_price   INTEGER,
+-                buy_city    TEXT,
+-                buy_date    TEXT,
+-                sell_price  INTEGER,
+-                sell_date   TEXT,
+-                profit      INTEGER,
+-                days_held   INTEGER,
+-                roi         REAL,
+-                source      TEXT,
+-                status      TEXT DEFAULT 'open'
++                id                INTEGER PRIMARY KEY AUTOINCREMENT,
++                description       TEXT,
++                model             TEXT,
++                buy_price         INTEGER,
++                buy_city          TEXT,
++                buy_date          TEXT,
++                sell_price        INTEGER,
++                sell_date         TEXT,
++                profit            INTEGER,
++                days_held         INTEGER,
++                roi               REAL,
++                source            TEXT,
++                status            TEXT DEFAULT 'open',
++                dcb_score_at_buy  INTEGER DEFAULT 0
+             )
+         """)
+ 
+@@ -175,6 +181,10 @@ def init_db():
+             "CREATE INDEX IF NOT EXISTS idx_seen_source "
+             "ON seen_listings(source)"
+         )
++        cur.execute(
++            "CREATE INDEX IF NOT EXISTS idx_seen_year "
++            "ON seen_listings(year)"
++        )
+ 
+         conn.commit()
+         _migrate_db(conn)
+@@ -206,7 +216,8 @@ def is_seen(listing_id: str, source: str) -> bool:
+ 
+ 
+ def mark_seen(listing_id: str, source: str, price: int,
+-              title: str = "", listing_url: str = ""):
++              title: str = "", listing_url: str = "", year: int = 0,
++              seller_ads_count: int = 0):
+     """Добавить новое объявление или обновить цену существующего."""
+     try:
+         now = datetime.now().isoformat()
+@@ -222,9 +233,9 @@ def mark_seen(listing_id: str, source: str, price: int,
+             history = json.dumps([{"date": now, "price": price}], ensure_ascii=False)
+             cur.execute("""
+                 INSERT INTO seen_listings
+-                    (listing_id, source, title, listing_url, first_seen, last_price, price_history)
+-                VALUES (?, ?, ?, ?, ?, ?, ?)
+-            """, (listing_id, source, title, listing_url, now, price, history))
++                    (listing_id, source, title, listing_url, first_seen, last_price, price_history, year, seller_ads_count)
++                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
++            """, (listing_id, source, title, listing_url, now, price, history, year, seller_ads_count))
+         else:
+             try:
+                 history = json.loads(row["price_history"]) if row["price_history"] else []
+@@ -234,10 +245,12 @@ def mark_seen(listing_id: str, source: str, price: int,
+                 history.append({"date": now, "price": price})
+             cur.execute("""
+                 UPDATE seen_listings
+-                SET last_price=?, price_history=?, title=?, listing_url=?
++                SET last_price=?, price_history=?, title=?, listing_url=?,
++                    year=CASE WHEN year=0 THEN ? ELSE year END,
++                    seller_ads_count=CASE WHEN seller_ads_count=0 THEN ? ELSE seller_ads_count END
+                 WHERE listing_id=? AND source=?
+             """, (price, json.dumps(history, ensure_ascii=False),
+-                  title, listing_url, listing_id, source))
++                  title, listing_url, year, seller_ads_count, listing_id, source))
+ 
+         conn.commit()
+         conn.close()
+@@ -801,8 +814,10 @@ def get_source_stats() -> dict:
+ 
+ 
+ def search_listings(brand: str = None, max_price: int = None,
+-                    country: str = None, min_score: int = 0, limit: int = 5) -> list:
+-    """Поиск объявлений из seen_listings по марке/стране/цене/score."""
++                    country: str = None, condition: str = None,
++                    min_score: int = 0, limit: int = 5,
++                    year_from: int = None, owners_only: bool = False) -> list:
++    """Поиск объявлений из seen_listings по марке/стране/цене/score/состоянию."""
+     DOMESTIC = {"lada", "vaz", "газ", "уаз", "ваз", "нива", "kalina", "granta", "vesta"}
+     try:
+         conn = _connect()
+@@ -823,6 +838,19 @@ def search_listings(brand: str = None, max_price: int = None,
+             brand_filters = " AND ".join("LOWER(title) NOT LIKE ?" for _ in DOMESTIC)
+             clauses.append(f"({brand_filters})")
+             params.extend(f"%{b}%" for b in DOMESTIC)
++        # condition: 'noresell' — исключаем с низким score (перекупы штрафуются),
++        #            'nodtp' — только высокий score (аварийные получают штраф от LLM)
++        if condition == "noresell":
++            clauses.append("last_dcb_score >= ?")
++            params.append(65)
++        elif condition == "nodtp":
++            clauses.append("last_dcb_score >= ?")
++            params.append(70)
++        if year_from and year_from > 0:
++            clauses.append("year >= ?")
++            params.append(year_from)
++        if owners_only:
++            clauses.append("seller_ads_count <= 1")
+         where = " AND ".join(clauses)
+         params.append(limit)
+         rows = conn.execute(
+@@ -843,7 +871,7 @@ def get_recent_listings(minutes: int = 60, min_score: int = 0, limit: int = 5) -
+         conn.row_factory = sqlite3.Row
+         rows = conn.execute(
+             """SELECT * FROM seen_listings
+-               WHERE first_seen > datetime('now', ?)
++               WHERE first_seen > datetime('now', 'localtime', ?)
+                  AND last_dcb_score >= ?
+                ORDER BY first_seen DESC LIMIT ?""",
+             (f"-{minutes} minutes", min_score, limit),
+@@ -906,7 +934,7 @@ def is_duplicate_listing(title: str, price: int, year: int, exclude_source: str)
+             WHERE source != ?
+               AND last_price BETWEEN ? AND ?
+               AND title LIKE ?
+-              AND first_seen > datetime('now', '-1 day')
++              AND first_seen > datetime('now', 'localtime', '-1 day')
+         """, (exclude_source, int(price * 0.95), int(price * 1.05), f"%{year}%"))
+         count = cur.fetchone()[0]
+         conn.close()
+diff --git a/fraud_detector.py b/fraud_detector.py
+index 049fa4a..d4d7427 100644
+--- a/fraud_detector.py
++++ b/fraud_detector.py
+@@ -1,6 +1,7 @@
+ # fraud_detector.py — детектор скрытых проблем и мошенничества.
+ 
+ import logging
++from datetime import datetime
+ 
+ # Паттерны скрытых дефектов: ключевая фраза → (реальная проблема, вес риска)
+ DEFECT_PATTERNS = {
+@@ -74,7 +75,7 @@ def detect_fraud(listing: dict) -> dict:
+                 risk_score += weight
+ 
+         # Аномальный пробег
+-        age = max(2026 - year, 1) if year > 2000 else 10
++        age = max(datetime.now().year - year, 1) if year > 2000 else 10
+         if mileage > 0:
+             if mileage < age * 4000:
+                 risks.append(
+diff --git a/main.py b/main.py
+index 414ced9..f572904 100644
+--- a/main.py
++++ b/main.py
+@@ -1,5 +1,5 @@
+-# main.py — точка входа Diar Car Buy AI v3.0.
+-# Два планировщика: fast_cycle (каждую минуту, RSS) + monitor_cycle (каждые 15 мин, все источники).
++# main.py — точка входа Diar Car Buy AI v5.0.
++# Два планировщика: fast_cycle + monitor_cycle (интервалы из конфига).
+ 
+ import asyncio
+ import io
+@@ -43,6 +43,7 @@ def _remember_listings(listings: list):
+             mark_seen(
+                 lid, l.get("source", ""), l.get("price", 0),
+                 l.get("title", ""), l.get("listing_url", ""),
++                l.get("year", 0), l.get("seller_ads_count", 0),
+             )
+         except Exception as e:
+             logging.debug(f"remember {l.get('listing_id')}: {e}")
+@@ -94,6 +95,7 @@ async def _process_listings(listings: list, tag: str = "", allowed_modes=None):
+             mark_seen(
+                 lid, src, listing["price"],
+                 listing.get("title", ""), listing.get("listing_url", ""),
++                listing.get("year", 0), listing.get("seller_ads_count", 0),
+             )
+             increment_analyzed()
+ 
+@@ -212,6 +214,8 @@ async def fast_cycle():
+         except Exception as _e:
+             logging.debug(f"reschedule: {_e}")
+ 
++    _remember_listings(listings)
++
+     def _age(l):
+         pa = l.get("published_at", "")
+         return 0 if not pa else calculate_listing_age_minutes(pa)
+@@ -266,6 +270,7 @@ async def monitor_cycle():
+     )
+     logging.info(f"Всего объявлений для обработки: {len(listings)}")
+ 
++    record_heartbeat()
+     await _process_listings(listings, tag="[FULL]")
+ 
+ 
+diff --git a/notifier.py b/notifier.py
+index 2165660..a02840a 100644
+--- a/notifier.py
++++ b/notifier.py
+@@ -1,4 +1,4 @@
+-# notifier.py — отправка уведомлений в Telegram для Diar Car Buy AI v3.0.
++# notifier.py — отправка уведомлений в Telegram для Diar Car Buy AI v5.0.
+ 
+ import logging
+ import time
+@@ -11,16 +11,18 @@ from database import was_notified, score_changed, mark_notified
+ MAX_MESSAGE_LEN = 4000
+ 
+ 
+-def _send_part(token: str, chat_id: str, text: str, retries: int = 3) -> bool:
++def _send_part(token: str, chat_id: str, text: str, retries: int = 3,
++               parse_mode: str = None, reply_markup: dict = None) -> bool:
+     """Отправить одну часть сообщения одному chat_id. True если доставлено."""
+     url = f"https://api.telegram.org/bot{token}/sendMessage"
++    payload = {"chat_id": chat_id, "text": text, "disable_web_page_preview": True}
++    if parse_mode:
++        payload["parse_mode"] = parse_mode
++    if reply_markup:
++        payload["reply_markup"] = reply_markup
+     for attempt in range(retries):
+         try:
+-            resp = requests.post(
+-                url,
+-                json={"chat_id": chat_id, "text": text, "disable_web_page_preview": True},
+-                timeout=15,
+-            )
++            resp = requests.post(url, json=payload, timeout=15)
+             resp.raise_for_status()
+             return True
+         except Exception as e:
+@@ -45,9 +47,8 @@ def _recipients() -> list:
+ def send_notification(result: dict):
+     """
+     Отправить уведомление по результату анализа объявления.
+-    - Пропускает если уже уведомляли и DCB Score не изменился.
+-    - Добавляет заголовок об арбитраже / снижении цены.
+-    - Разбивает длинные сообщения на части по 4000 символов.
++    Использует HTML-карточку из build_notification() если доступна,
++    иначе fallback на plain-text из full_analysis.
+     """
+     try:
+         load_config()
+@@ -55,8 +56,6 @@ def send_notification(result: dict):
+         listing_id = listing.get("listing_id")
+         source = listing.get("source")
+         dcb_score = result.get("dcb_score", 0)
+-        strategy = result.get("strategy", {})
+-        arbitrage = result.get("arbitrage")
+ 
+         # Финальная проверка цены — блокируем уведомления дороже бюджета
+         price = listing.get("price", 0)
+@@ -74,36 +73,47 @@ def send_notification(result: dict):
+                 logging.info(f"Пропуск {listing_id}: оценка не изменилась")
+                 return
+ 
+-        # Заголовок
+-        header_parts = []
+-        if arbitrage:
+-            header_parts.append(
+-                f"🚚 АРБИТРАЖ из {arbitrage['city']}! "
+-                f"Прибыль: +{arbitrage['net_profit']:,} ₽".replace(",", " ")
+-            )
+-        if result.get("price_dropped"):
+-            header_parts.append(
+-                f"🔄 ОБНОВЛЕНО — цена упала на {result['drop_amount']:,} ₽".replace(",", " ")
+-            )
+-        header = "\n".join(header_parts) + "\n\n" if header_parts else ""
+-
+-        # Основное тело
+-        body = result.get("full_analysis", "")
+-
+-        # Стратегия звонка
+-        footer_parts = []
+-        if strategy:
+-            footer_parts.append(f"📞 ЗВОНИТЬ: {strategy.get('best_time', '')}")
+-            footer_parts.append(f"💬 \"{strategy.get('call_script', '')}\"")
+-        footer_parts.append(f"⏱ {result.get('urgency_label', '')}")
+-        footer_parts.append(f"🔗 {listing.get('listing_url', '')}")
+-        footer = "\n".join(footer_parts)
+-
+-        message = f"{header}{body}\n\n{footer}"
+-
+-        # Разбивка на части
+-        parts = [message[i:i + MAX_MESSAGE_LEN]
+-                 for i in range(0, len(message), MAX_MESSAGE_LEN)]
++        # HTML-карточка из bot_interface (красивое форматирование)
++        text = ""
++        parse_mode = None
++        reply_markup_dict = None
++        try:
++            from bot_interface import build_notification
++            html_text, keyboard = build_notification(result)
++            if html_text:
++                text = html_text
++                parse_mode = "HTML"
++                reply_markup_dict = keyboard.to_dict() if keyboard else None
++        except Exception as e:
++            logging.warning(f"build_notification недоступен: {e} — fallback на plain text")
++
++        # Fallback: сырой LLM-текст + стратегия + ссылка
++        if not text:
++            strategy = result.get("strategy", {})
++            arbitrage = result.get("arbitrage")
++            header_parts = []
++            if arbitrage:
++                header_parts.append(
++                    f"🚚 АРБИТРАЖ из {arbitrage['city']}! "
++                    f"Прибыль: +{arbitrage['net_profit']:,} ₽".replace(",", " ")
++                )
++            if result.get("price_dropped"):
++                header_parts.append(
++                    f"🔄 ОБНОВЛЕНО — цена упала на {result['drop_amount']:,} ₽".replace(",", " ")
++                )
++            header = "\n".join(header_parts) + "\n\n" if header_parts else ""
++            body = result.get("full_analysis", "")
++            footer_parts = []
++            if strategy:
++                footer_parts.append(f"📞 ЗВОНИТЬ: {strategy.get('best_time', '')}")
++                footer_parts.append(f"💬 \"{strategy.get('call_script', '')}\"")
++            footer_parts.append(f"⏱ {result.get('urgency_label', '')}")
++            footer_parts.append(f"🔗 {listing.get('listing_url', '')}")
++            footer_str = "\n".join(footer_parts)
++            text = f"{header}{body}\n\n{footer_str}"
++
++        # Разбивка на части (4000 символов — лимит Telegram)
++        parts = [text[i:i + MAX_MESSAGE_LEN] for i in range(0, len(text), MAX_MESSAGE_LEN)]
+ 
+         token = RUNTIME_CONFIG.get("TELEGRAM_BOT_TOKEN", "")
+         recipients = _recipients()
+@@ -112,12 +122,16 @@ def send_notification(result: dict):
+             logging.error("Не задан TELEGRAM_BOT_TOKEN или список получателей")
+             return
+ 
+-        # Шлём всем админам. send_ok=True если доставлено хотя бы одному —
+-        # помечаем как уведомлённое только при успешной доставке.
++        # Шлём всем: клавиатура только к первой части, остальные — plain
+         send_ok = False
+         for chat_id in recipients:
+-            delivered = all(_send_part(token, chat_id, part) for part in parts)
+-            if delivered:
++            ok_parts = []
++            for i, part in enumerate(parts):
++                kb = reply_markup_dict if i == 0 else None
++                delivered = _send_part(token, chat_id, part,
++                                       parse_mode=parse_mode, reply_markup=kb)
++                ok_parts.append(delivered)
++            if all(ok_parts):
+                 send_ok = True
+             else:
+                 logging.warning(f"Доставка {chat_id} не удалась: {listing_id}")
+diff --git a/parsers/autoru.py b/parsers/autoru.py
+index a229111..511acfb 100644
+--- a/parsers/autoru.py
++++ b/parsers/autoru.py
+@@ -93,8 +93,6 @@ def parse() -> list:
+         if cnt >= 5:
+             RUNTIME_CONFIG["AUTORU_EMPTY_CYCLES"] = 0
+             _notify_stale_cookies()
+-    else:
+-        RUNTIME_CONFIG["AUTORU_EMPTY_CYCLES"] = 0
+ 
+     return results
+ 
+diff --git a/parsers/avito.py b/parsers/avito.py
+index aba53e3..9f3e598 100644
+--- a/parsers/avito.py
++++ b/parsers/avito.py
+@@ -1,4 +1,4 @@
+-# parsers/avito.py — парсер Avito через Playwright headless Firefox (fallback: Chromium).
++﻿# parsers/avito.py — парсер Avito через Playwright headless Firefox (fallback: Chromium).
+ 
+ import re
+ import time
+@@ -73,7 +73,7 @@ def _parse_price(text: str) -> int:
+ 
+ 
+ def _extract_year(text: str) -> int:
+-    m = re.search(r"\b(199\d|200\d|201\d|202[0-6])\b", text)
++    m = re.search(r"\b(199\d|200\d|201\d|202\d)\b", text)
+     return int(m.group(1)) if m else 0
+ 
+ 
+@@ -293,8 +293,6 @@ def parse() -> list:
+                     RUNTIME_CONFIG["AVITO_CURL_BLOCKED_UNTIL"] = now + 1800
+                     logging.warning("Avito curl: капча — пауза 30 мин")
+                 else:
+-                    from parsers.avito_rss import parse as _rss  # переиспользуем парсер карточек
+-                    # строим results из уже загруженного soup
+                     from database import is_seen
+                     for card in cards:
+                         try:
+diff --git a/parsers/avito_playwright.py b/parsers/avito_playwright.py
+index dd04aa2..2b58869 100644
+--- a/parsers/avito_playwright.py
++++ b/parsers/avito_playwright.py
+@@ -1,4 +1,4 @@
+-# parsers/avito_playwright.py — async fallback-парсер Avito через Playwright + stealth.
++﻿# parsers/avito_playwright.py — async fallback-парсер Avito через Playwright + stealth.
+ # Запускается автоматически из parsers/avito.py если основной парсер вернул 0.
+ 
+ import asyncio
+@@ -69,7 +69,7 @@ async def _parse_item(item) -> dict | None:
+         description = (await desc_el.inner_text()).strip() if desc_el else ""
+ 
+         full_text = f"{title} {description}"
+-        year_match = re.search(r"\b(199\d|200\d|201\d|202[0-6])\b", full_text)
++        year_match = re.search(r"\b(199\d|200\d|201\d|202\d)\b", full_text)
+         year = int(year_match.group(1)) if year_match else 0
+ 
+         mileage_match = re.search(r"(\d+)\s*(?:тыс\.?\s*)?км", full_text)
+@@ -205,10 +205,12 @@ async def parse_async() -> list:
+ 
+ def parse() -> list:
+     """Синхронная обёртка — вызывается из main.py через asyncio.to_thread."""
++    loop = asyncio.new_event_loop()
+     try:
+-        loop = asyncio.new_event_loop()
+         asyncio.set_event_loop(loop)
+         return loop.run_until_complete(parse_async())
+     except Exception as e:
+         logging.error(f"Avito Playwright sync wrapper: {e}")
+         return []
++    finally:
++        loop.close()
+diff --git a/parsers/avito_rss.py b/parsers/avito_rss.py
+index 3e4ca82..632ce3e 100644
+--- a/parsers/avito_rss.py
++++ b/parsers/avito_rss.py
+@@ -1,4 +1,4 @@
+-# parsers/avito_rss.py — парсер Avito через curl_cffi (Firefox TLS fingerprint) + BeautifulSoup.
++﻿# parsers/avito_rss.py — парсер Avito через curl_cffi (Firefox TLS fingerprint) + BeautifulSoup.
+ # Обходит капчу без Playwright: правильный TLS fingerprint + куки из реального Firefox.
+ 
+ import logging
+@@ -63,7 +63,7 @@ def _parse_price(text: str) -> int:
+ 
+ 
+ def _extract_year(text: str) -> int:
+-    m = re.search(r"\b(199\d|200\d|201\d|202[0-6])\b", text)
++    m = re.search(r"\b(199\d|200\d|201\d|202\d)\b", text)
+     return int(m.group(1)) if m else 0
+ 
+ 
+diff --git a/parsers/drom.py b/parsers/drom.py
+index 6c4fd84..3caf773 100644
+--- a/parsers/drom.py
++++ b/parsers/drom.py
+@@ -1,4 +1,4 @@
+-# parsers/drom.py — парсер Drom.ru через Playwright Firefox.
++﻿# parsers/drom.py — парсер Drom.ru через Playwright Firefox.
+ # Drom рендерит листинги через JS — curl_cffi даёт только платные размещения.
+ # Playwright + скролл загружает реальные отфильтрованные объявления.
+ # Москва + региональные URL (is_regional=True для арбитража).
+@@ -127,7 +127,7 @@ def _parse_card(card, city: str, is_regional: bool) -> dict | None:
+         price_text = price_el.get_text(strip=True) if price_el else ""
+         price = int(re.sub(r"\D", "", price_text)) if price_text else 0
+ 
+-        year_m = re.search(r"\b(199\d|200\d|201\d|202[0-6])\b", title)
++        year_m = re.search(r"\b(199\d|200\d|201\d|202\d)\b", title)
+         year = int(year_m.group(1)) if year_m else 0
+ 
+         location_el = card.find(attrs={"data-ftid": "bull_location"})
+@@ -248,13 +248,3 @@ def parse() -> list:
+     logging.info(f"Drom итого: {len(results)} новых объявлений")
+     return results
+ 
+-
+-# Устаревшие функции — оставлены для обратной совместимости
+-def _parse_link_item(link_el, city: str, is_regional: bool) -> dict | None:
+-    """Deprecated: использовался для curl_cffi <a href> парсинга."""
+-    return None
+-
+-
+-def _parse_item(item, city: str, is_regional: bool) -> dict | None:
+-    """Deprecated: старый BeautifulSoup парсер."""
+-    return None
+diff --git a/parsers/tg_parser.py b/parsers/tg_parser.py
+index fa513c2..408435f 100644
+--- a/parsers/tg_parser.py
++++ b/parsers/tg_parser.py
+@@ -1,4 +1,4 @@
+-# parsers/tg_parser.py — парсер Telegram для Diar Car Buy AI v3.0.
++﻿# parsers/tg_parser.py — парсер Telegram для Diar Car Buy AI v3.0.
+ # Самый быстрый источник: объявления появляются за 5-15 минут до Avito.
+ # Использует Telethon (MTProto). Синхронная обёртка для вызова из main.py.
+ 
+@@ -17,7 +17,7 @@ SALE_KEYWORDS = ["продам", "продаю", "продаётся"]
+ 
+ def extract_year_from_text(text: str) -> int:
+     """Извлечь год выпуска из текста объявления."""
+-    match = re.search(r"\b(199\d|200\d|201\d|202[0-6])\b", text)
++    match = re.search(r"\b(199\d|200\d|201\d|202\d)\b", text)
+     return int(match.group(1)) if match else 0
+ 
+ 
+@@ -146,7 +146,7 @@ def parse() -> list:
+ 
+     thread = threading.Thread(target=_run, daemon=True)
+     thread.start()
+-    thread.join(timeout=10)
++    thread.join(timeout=30)
+ 
+     if thread.is_alive():
+         logging.warning("TG парсер завис — пропускаем цикл")
+diff --git a/parsers/vk_parser.py b/parsers/vk_parser.py
+index 7f6de9e..9ed5ef9 100644
+--- a/parsers/vk_parser.py
++++ b/parsers/vk_parser.py
+@@ -1,4 +1,4 @@
+-# parsers/vk_parser.py — парсер ВКонтакте для Diar Car Buy AI v3.0.
++﻿# parsers/vk_parser.py — парсер ВКонтакте для Diar Car Buy AI v3.0.
+ # Объявления из VK групп появляются РАНЬШЕ чем на Avito.
+ # Использует официальный VK API — без парсинга HTML.
+ 
+@@ -23,7 +23,7 @@ CAR_KEYWORDS = [
+ 
+ def extract_year_from_text(text: str) -> int:
+     """Извлечь год выпуска из текста объявления."""
+-    match = re.search(r"\b(199\d|200\d|201\d|202[0-6])\b", text)
++    match = re.search(r"\b(199\d|200\d|201\d|202\d)\b", text)
+     return int(match.group(1)) if match else 0
+ 
+ 
+diff --git a/test_autoru.py b/test_autoru.py
+new file mode 100644
+index 0000000..de1811c
+--- /dev/null
++++ b/test_autoru.py
+@@ -0,0 +1,7 @@
++import logging, sys
++logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stdout)
++from parsers.autoru import parse
++r = parse()
++print(f"Auto.ru: {len(r)}")
++for x in r[:40]:
++    print(f"  {x['title']} | {x['price']:,} руб | id={x['listing_id']}")
+diff --git a/test_avito.py b/test_avito.py
+new file mode 100644
+index 0000000..4295a1a
+--- /dev/null
++++ b/test_avito.py
+@@ -0,0 +1,7 @@
++import logging, sys
++logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stdout)
++from parsers.avito import parse
++r = parse()
++print(f"Avito: {len(r)}")
++for x in r[:40]:
++    print(f"  {x['title']} | {x['price']:,} руб | id={x['listing_id']}")
+diff --git a/test_drom.py b/test_drom.py
+new file mode 100644
+index 0000000..2bb3ee6
+--- /dev/null
++++ b/test_drom.py
+@@ -0,0 +1,7 @@
++import logging, sys
++logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stdout)
++from parsers.drom import parse
++r = parse()
++print(f"ИТОГО: {len(r)} объявлений")
++for x in r[:40]:
++    print(f"  {x['title']} | {x['price']:,} руб | {x['city']}")
+diff --git a/tests/test_bugfixes.py b/tests/test_bugfixes.py
+index 8ce7a04..2739864 100644
+--- a/tests/test_bugfixes.py
++++ b/tests/test_bugfixes.py
+@@ -24,7 +24,7 @@ def test_notifier_no_mark_on_send_failure(monkeypatch):
+     monkeypatch.setattr(notifier, "mark_notified",
+                         lambda lid, src, score: mark_called.append(1) or True)
+     monkeypatch.setattr(notifier, "_send_part",
+-                        lambda token, chat, text, retries=3: (_ for _ in ()).throw(
++                        lambda token, chat, text, retries=3, **kw: (_ for _ in ()).throw(
+                             Exception("network error")))
+ 
+     result = {
+@@ -59,8 +59,8 @@ def test_notifier_marks_on_success(monkeypatch):
+     monkeypatch.setattr(notifier, "score_changed", lambda lid, src, s: True)
+     monkeypatch.setattr(notifier, "mark_notified",
+                         lambda lid, src, score: mark_called.append(1) or True)
+-    # _send_part теперь возвращает bool (True = доставлено)
+-    monkeypatch.setattr(notifier, "_send_part", lambda token, chat, text, retries=3: True)
++    monkeypatch.setattr(notifier, "_send_part",
++                        lambda token, chat, text, retries=3, **kw: True)
+ 
+     result = {
+         "listing": {"listing_id": "abc456", "source": "avito", "price": 90000},
+diff --git a/utils/watchdog.py b/utils/watchdog.py
+index f4eedc3..caa0723 100644
+--- a/utils/watchdog.py
++++ b/utils/watchdog.py
+@@ -7,8 +7,8 @@ import requests
+ 
+ from config import RUNTIME_CONFIG
+ 
+-# Порог молчания — если циклов не было дольше, шлём тревогу
+-HEARTBEAT_TIMEOUT = 900  # 15 минут
++# Порог молчания — должен быть больше максимального интервала цикла (20 мин = 1200 с)
++HEARTBEAT_TIMEOUT = 1500  # 25 минут
+ 
+ 
+ def record_heartbeat():

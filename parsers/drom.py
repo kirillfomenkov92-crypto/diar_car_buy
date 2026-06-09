@@ -217,7 +217,7 @@ def parse() -> list:
         logging.error("Drom: playwright не установлен")
         return []
 
-    max_price = RUNTIME_CONFIG.get("MAX_PRICE", 150000)
+    max_price = RUNTIME_CONFIG.get("MAX_PRICE", 140000)
     urls = [u.format(max_price=max_price) for u in DROM_URLS]
     results = []
 
