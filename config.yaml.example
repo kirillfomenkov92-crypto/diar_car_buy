@@ -14,6 +14,8 @@ TG_API_HASH: ""             # api_hash с my.telegram.org (опциональн�
 
 MAX_PRICE: 140000           # бюджет, ₽
 MIN_DCB_SCORE: 70           # порог уведомления
+URGENT_MIN_SCORE: 85        # порог score для заголовка 🔥 СРОЧНО
+URGENT_AGE_MINUTES: 30      # возраст объявления (мин) для режима СРОЧНО
 CHECK_INTERVAL_MINUTES: 15  # интервал проверки, мин
 PAUSED: false               # стартовое состояние мониторинга
 

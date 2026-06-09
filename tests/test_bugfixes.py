@@ -141,6 +141,8 @@ def test_analyzer_empty_market_no_crash(tmp_path, monkeypatch):
     assert isinstance(result, dict)
     assert "dcb_score" in result
     assert 0 <= result["dcb_score"] <= 100
+    assert "notification_mode" in result
+    assert result["notification_mode"] in ("urgent", "good")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

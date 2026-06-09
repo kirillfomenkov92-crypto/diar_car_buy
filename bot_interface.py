@@ -212,7 +212,7 @@ def _badge(data: dict) -> str:
         return "🔥 СРОЧНО"
     if mode == "good":
         return "💰 ВЫГОДНО"
-    return "⭐ ЧЁТКИЙ ВАРИАНТ" if (data.get("score") or 0) >= 85 else "💰 ВЫГОДНО"
+    return "⭐ ЧЁТКИЙ ВАРИАНТ" if (data.get("score") or 0) >= RUNTIME_CONFIG.get("URGENT_MIN_SCORE", 85) else "💰 ВЫГОДНО"
 
 
 def render_card(data: dict) -> str:

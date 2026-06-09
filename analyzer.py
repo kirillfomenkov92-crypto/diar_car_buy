@@ -204,7 +204,8 @@ def analyze_listing(listing: dict) -> dict:
         logging.info(f"Пропущено (цена {price_val:,} >= рынок {market_avg:,}): {listing.get('title', '')}")
         return {
             "dcb_score": 0, "verdict": "Цена выше рынка — пропущено",
-            "full_analysis": "", "listing": listing, "market": market,
+            "full_analysis": "", "notification_mode": "good",
+            "listing": listing, "market": market,
             "seller": seller, "fraud": fraud, "strategy": strategy,
             "arbitrage": arbitrage, "price_dropped": dropped,
             "drop_amount": drop_amount, "days_on_market": days,
@@ -332,8 +333,9 @@ def analyze_listing(listing: dict) -> dict:
         reject_reasons.append("цена не ниже рынка")
     reject_reason = ", ".join(reject_reasons) if reject_reasons else "низкий общий балл"
 
-    # urgent: объявление свежее 30 мин И высокий score → надо звонить немедленно
-    notification_mode = "urgent" if age_minutes <= 30 and dcb_score >= 85 else "good"
+    urgent_age = RUNTIME_CONFIG.get("URGENT_AGE_MINUTES", 30)
+    urgent_score = RUNTIME_CONFIG.get("URGENT_MIN_SCORE", 85)
+    notification_mode = "urgent" if age_minutes <= urgent_age and dcb_score >= urgent_score else "good"
 
     return {
         "dcb_score": dcb_score,
