@@ -2,7 +2,9 @@
 # python-telegram-bot v20+ async. Красивое форматирование всех ответов.
 
 import re
+import json
 import logging
+import sqlite3
 import time
 from functools import wraps
 
@@ -10,10 +12,18 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from config import load_config, set_value, RUNTIME_CONFIG
+from database import (
+    DB_PATH,
+    get_today_stats, get_top5_today, get_today_analyzed, get_deals_stats,
+    add_deal, close_deal, get_active_arbitrage,
+    get_speed_stats, get_source_stats,
+)
+from market_analyzer import analyze_market
+
+LINE = "━━━━━━━━━━━━━━━"
 
 
 def _is_authorized(uid: int) -> bool:
-    """Проверить, разрешён ли доступ пользователю."""
     allowed = RUNTIME_CONFIG.get("ALLOWED_USER_IDS", [])
     return not allowed or uid in allowed
 
@@ -30,22 +40,9 @@ def authorized_only(func):
             return
         return await func(update, context)
     return wrapper
-import sqlite3
-import json
-
-from database import (
-    DB_PATH,
-    get_today_stats, get_top5_today, get_today_analyzed, get_deals_stats,
-    add_deal, close_deal, get_active_arbitrage,
-    get_speed_stats, get_source_stats,
-)
-from market_analyzer import analyze_market
-
-LINE = "━━━━━━━━━━━━━━━"
 
 
 def _fmt(n) -> str:
-    """Форматировать число с пробелами."""
     try:
         return f"{int(n):,}".replace(",", " ")
     except Exception:
