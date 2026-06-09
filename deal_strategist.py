@@ -40,11 +40,12 @@ def build_strategy(listing: dict, market: dict, seller: dict, fraud: dict) -> di
         if not arguments:
             arguments.append("Осмотр всегда выявляет мелкие недостатки")
 
+        opening_fmt = f"{opening_offer:,}".replace(",", " ")
         call_script = (
             f"Здравствуйте, машина ещё актуальна? "
             f"Готов приехать сегодня с деньгами, "
-            f"рассматриваю за {opening_offer:,} — реально?"
-        ).replace(",", " ")
+            f"рассматриваю за {opening_fmt} — реально?"
+        )
 
         return {
             "opening_offer": opening_offer,

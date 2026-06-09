@@ -77,19 +77,20 @@ def detect_fraud(listing: dict) -> dict:
         # Аномальный пробег
         age = max(datetime.now().year - year, 1) if year > 2000 else 10
         if mileage > 0:
+            mileage_fmt = f"{mileage:,}".replace(",", " ")
             if mileage < age * 4000:
                 risks.append(
-                    f"⚠️ Подозрительно малый пробег ({mileage:,} км за {age} лет)".replace(",", " ")
+                    f"⚠️ Подозрительно малый пробег ({mileage_fmt} км за {age} лет)"
                 )
                 risk_score += 25
             elif mileage > age * 28000:
                 risks.append(
-                    f"⚠️ Критически высокий пробег ({mileage:,} км за {age} лет)".replace(",", " ")
+                    f"⚠️ Критически высокий пробег ({mileage_fmt} км за {age} лет)"
                 )
                 risk_score += 20
             if mileage % 10000 == 0 and mileage > 50000:
                 risks.append(
-                    f"⚠️ Круглый пробег {mileage:,} км — возможна скрутка".replace(",", " ")
+                    f"⚠️ Круглый пробег {mileage_fmt} км — возможна скрутка"
                 )
                 risk_score += 15
 
