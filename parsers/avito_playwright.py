@@ -14,7 +14,41 @@ _stealth = Stealth()
 from config import RUNTIME_CONFIG
 from database import is_seen
 from utils.headers import USER_AGENTS
-from parsers.avito import CAPTCHA_PHRASES, is_captcha_response, _avito_playwright_cookies
+
+CAPTCHA_PHRASES = [
+    "подтвердите, что вы не робот", "доступ ограничен",
+    "автоматические запросы", "подозрительная активность",
+    "слишком много запросов", "проверка безопасности",
+    "ddos-guard", "you have been blocked",
+]
+
+
+def is_captcha_response(text: str) -> bool:
+    low = text.lower()
+    return any(p.lower() in low for p in CAPTCHA_PHRASES)
+
+
+def _avito_playwright_cookies() -> list:
+    try:
+        import browser_cookie3
+        for browser_name, loader in [
+            ("Firefox", browser_cookie3.firefox),
+            ("Chrome", browser_cookie3.chrome),
+        ]:
+            try:
+                cj = loader(domain_name=".avito.ru")
+                result = [
+                    {"name": c.name, "value": c.value, "domain": ".avito.ru", "path": "/"}
+                    for c in cj if "avito.ru" in c.domain
+                ]
+                if result:
+                    logging.info(f"Avito: {len(result)} куки из {browser_name}")
+                    return result
+            except Exception as e:
+                logging.debug(f"Avito cookies: {browser_name} недоступен: {e}")
+    except Exception as e:
+        logging.warning(f"Avito: не удалось загрузить куки: {e}")
+    return []
 
 AVITO_URL = "https://www.avito.ru/moskva/avtomobili?s=104&pmax={max_price}"
 
