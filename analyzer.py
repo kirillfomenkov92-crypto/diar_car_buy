@@ -332,12 +332,16 @@ def analyze_listing(listing: dict) -> dict:
         reject_reasons.append("цена не ниже рынка")
     reject_reason = ", ".join(reject_reasons) if reject_reasons else "низкий общий балл"
 
+    # urgent: объявление свежее 30 мин И высокий score → надо звонить немедленно
+    notification_mode = "urgent" if age_minutes <= 30 and dcb_score >= 85 else "good"
+
     return {
         "dcb_score": dcb_score,
         "verdict": verdict,
         "full_analysis": full_text,
         "reject_reason": reject_reason,
         "used_provider": used_provider,
+        "notification_mode": notification_mode,
         "listing": listing,
         "market": market,
         "seller": seller,

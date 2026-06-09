@@ -58,10 +58,8 @@ def _city_allowed(city: str, allowed: list) -> bool:
     return any(a.lower() in c for a in allowed)
 
 
-async def _process_listings(listings: list, tag: str = "", allowed_modes=None):
+async def _process_listings(listings: list, tag: str = ""):
     """Общая логика анализа и уведомлений для списка объявлений."""
-    if allowed_modes is None:
-        allowed_modes = {"urgent", "good"}
     max_price = RUNTIME_CONFIG.get("MAX_PRICE", 150000)
     target = RUNTIME_CONFIG.get("TARGET_MODELS", [])
     allowed_cities = RUNTIME_CONFIG.get("ALLOWED_CITIES", [])
