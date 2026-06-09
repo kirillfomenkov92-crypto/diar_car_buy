@@ -926,6 +926,8 @@ def add_favorite(user_id: int, listing_id: str) -> bool:
 def is_duplicate_listing(title: str, price: int, year: int, exclude_source: str) -> bool:
     """True если за последние сутки уже было похожее объявление с ДРУГОГО источника.
     Похожее = цена ±5% + год в заголовке + другой источник."""
+    if year <= 0:
+        return False
     try:
         conn = _connect()
         cur = conn.cursor()
