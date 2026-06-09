@@ -298,7 +298,7 @@ async def run():
         max_instances=1, misfire_grace_time=120,
     )
     scheduler.add_job(
-        lambda: health_check(), "interval", minutes=10,
+        health_check, "interval", minutes=10,
         max_instances=1, misfire_grace_time=60,
     )
     scheduler.start()

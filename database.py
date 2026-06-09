@@ -46,10 +46,9 @@ def _model_keywords(model: str, limit: int = 2) -> list:
 
 
 def _connect():
-    """Открыть соединение с WAL-режимом и таймаутом для конкурентного доступа."""
+    """Открыть соединение с таймаутом для конкурентного доступа."""
     conn = sqlite3.connect(DB_PATH, timeout=10, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
@@ -440,36 +439,6 @@ def get_seller_history(seller_id: str, source: str) -> dict:
         logging.error(f"Ошибка get_seller_history: {e}")
         return {}
 
-
-def update_seller_history(seller_id: str, source: str, price: int):
-    """Обновить историю продавца (количество объявлений и средняя цена)."""
-    try:
-        if not seller_id:
-            return
-        now = datetime.now().isoformat()
-        conn = _connect()
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT total_listings, avg_price FROM seller_history WHERE seller_id=? AND source=?",
-            (seller_id, source),
-        )
-        row = cur.fetchone()
-        if row is None:
-            cur.execute("""
-                INSERT INTO seller_history (seller_id, source, first_seen, total_listings, avg_price)
-                VALUES (?, ?, ?, 1, ?)
-            """, (seller_id, source, now, price))
-        else:
-            total = row["total_listings"] + 1
-            avg = int((row["avg_price"] * row["total_listings"] + price) / total)
-            cur.execute("""
-                UPDATE seller_history SET total_listings=?, avg_price=?
-                WHERE seller_id=? AND source=?
-            """, (total, avg, seller_id, source))
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logging.error(f"Ошибка update_seller_history: {e}")
 
 
 # ── Функции для deals ──────────────────────────────────────────────────────
