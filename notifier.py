@@ -57,6 +57,10 @@ def send_notification(result: dict):
         source = listing.get("source")
         dcb_score = result.get("dcb_score", 0)
 
+        if not listing_id or not source:
+            logging.warning(f"send_notification: нет listing_id или source — пропуск")
+            return
+
         # Финальная проверка цены — блокируем уведомления дороже бюджета
         price = listing.get("price", 0)
         max_price = RUNTIME_CONFIG.get("MAX_PRICE", 140000)

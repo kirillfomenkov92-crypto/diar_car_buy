@@ -198,6 +198,33 @@ def analyze_listing(listing: dict) -> dict:
     price_val = listing.get("price") or 0
     mileage_val = listing.get("mileage") or 0
 
+    # ── Предфильтр: автомобиль не на ходу / под запчасти → сразу отклоняем ──
+    _NOT_RUNNING = [
+        "не на ходу", "на запчасти", "на з/ч", "под запчасти", "по запчастям",
+        "под разбор", "под восстановление", "не заводится", "не едет",
+        "стукнул двигатель", "стук двигателя", "стучит двигатель",
+        "клин двигателя", "клинанул", "клинануло",
+        "капремонт двигателя", "кап.ремонт", "требует капремонта",
+        "двигатель умер", "двигатель убит", "двигатель под замену",
+        "гнилой кузов", "сгнил кузов", "кузов гнилой",
+    ]
+    _desc_low = (listing.get("description") or "").lower()
+    _title_low = (listing.get("title") or "").lower()
+    for _pattern in _NOT_RUNNING:
+        if _pattern in _desc_low or _pattern in _title_low:
+            logging.info(f"Предфильтр 'не на ходу': '{_pattern}' → {listing.get('title', '')}")
+            return {
+                "dcb_score": 0, "verdict": f"Не на ходу: '{_pattern}' — пропущено",
+                "full_analysis": "", "notification_mode": "good",
+                "listing": listing, "market": market,
+                "seller": seller, "fraud": fraud, "strategy": strategy,
+                "arbitrage": arbitrage, "price_dropped": dropped,
+                "drop_amount": drop_amount, "days_on_market": days,
+                "age_minutes": age_minutes, "urgency_label": urgency_label,
+                "reject_reason": f"не на ходу: {_pattern}",
+                "visual_issues": [], "visual_ok": None,
+            }
+
     # ── Предфильтр: цена выше рынка → не тратим LLM ──────────────────────
     market_avg = market.get("market_avg", 0)
     if market_avg > 0 and price_val > market_avg * 1.05:
@@ -289,14 +316,19 @@ def analyze_listing(listing: dict) -> dict:
     except Exception as e:
         logging.error(f"Ошибка парсинга ответа LLM: {e}")
 
-    # Все LLM недоступны — локальный скоринг как последний резерв
-    if dcb_score == 0 and (not full_text.strip() or full_text.startswith("Ошибка")):
+    # LLM ответил но без DCB SCORE, или все LLM недоступны — локальный скоринг
+    if dcb_score == 0:
         underval = market.get("undervaluation_pct", 0)
         fraud_penalty = fraud.get("risk_score", 0)
         motivation_bonus = min(seller.get("motivation_score", 0) // 2, 20)
-        dcb_score = int(40 + underval * 0.8 + motivation_bonus - fraud_penalty * 0.4)
-        verdict = f"Локальная оценка (LLM недоступен): недооценка {underval}%, риск {fraud_penalty}/100"
-        logging.warning(f"Все LLM недоступны — локальный score: {dcb_score}/100 для {listing_id}")
+        # Базовая ставка 25 (не 40) — без рыночных данных не должно быть "хорошо"
+        dcb_score = int(25 + underval * 0.8 + motivation_bonus - fraud_penalty * 0.4)
+        if full_text.strip() and not full_text.startswith("Ошибка"):
+            verdict = f"Локальная оценка (LLM не вернул DCB SCORE): недооценка {underval}%, риск {fraud_penalty}/100"
+            logging.warning(f"LLM ответил без DCB SCORE — локальный fallback: {dcb_score}/100 для {listing_id}")
+        else:
+            verdict = f"Локальная оценка (LLM недоступен): недооценка {underval}%, риск {fraud_penalty}/100"
+            logging.warning(f"Все LLM недоступны — локальный score: {dcb_score}/100 для {listing_id}")
 
     # Штраф за перекупщика (применяется поверх оценки LLM)
     if seller["reseller_probability"] >= 70:

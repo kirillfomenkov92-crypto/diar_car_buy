@@ -160,6 +160,7 @@ def _parse_card(card, city: str, is_regional: bool) -> dict | None:
 def _parse_city(url: str, city: str, is_regional: bool,
                 max_price: int, browser) -> list:
     """Открыть страницу Drom через Playwright, прокрутить и собрать карточки."""
+    context = None
     try:
         context = browser.new_context(
             locale="ru-RU",
@@ -171,17 +172,23 @@ def _parse_city(url: str, city: str, is_regional: bool,
             context.add_cookies(cookies)
 
         page = context.new_page()
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        response = page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+        # Обработка HTTP-ошибок: 403/429/503 → cooldown
+        if response and response.status in (403, 429, 503):
+            cooldown = 1800 if response.status == 429 else 900
+            RUNTIME_CONFIG["DROM_BLOCKED_UNTIL"] = time.time() + cooldown
+            logging.warning(f"Drom {city}: HTTP {response.status} — cooldown {cooldown//60} мин")
+            return []
+
         time.sleep(random.uniform(2, 4))
 
-        # Скроллим для загрузки lazy-loaded объявлений
         for _ in range(6):
             page.evaluate("window.scrollBy(0, 2000)")
             time.sleep(random.uniform(0.8, 1.4))
         time.sleep(2)
 
         soup = BeautifulSoup(page.content(), "html.parser")
-        context.close()
 
         cards = soup.find_all(attrs={"data-ftid": "bulls-list_bull"})
         logging.info(f"Drom {city}: найдено {len(cards)} карточек")
@@ -193,7 +200,6 @@ def _parse_city(url: str, city: str, is_regional: bool,
                 continue
             if listing["price"] <= 0:
                 continue
-            # Ценовой фильтр ДО is_seen/mark_seen — дорогие не попадают в БД
             if listing["price"] > max_price:
                 continue
             if is_seen(listing["listing_id"], SOURCE):
@@ -206,6 +212,12 @@ def _parse_city(url: str, city: str, is_regional: bool,
     except Exception as e:
         logging.error(f"Drom {city}: {e}")
         return []
+    finally:
+        if context:
+            try:
+                context.close()
+            except Exception:
+                pass
 
 
 def parse() -> list:
@@ -215,6 +227,12 @@ def parse() -> list:
         from playwright.sync_api import sync_playwright
     except ImportError:
         logging.error("Drom: playwright не установлен")
+        return []
+
+    blocked_until = RUNTIME_CONFIG.get("DROM_BLOCKED_UNTIL", 0)
+    if time.time() < blocked_until:
+        mins = int((blocked_until - time.time()) / 60)
+        logging.info(f"Drom: cooldown ещё {mins} мин — пропуск")
         return []
 
     max_price = RUNTIME_CONFIG.get("MAX_PRICE", 140000)

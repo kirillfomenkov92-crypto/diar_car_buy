@@ -20,3 +20,4 @@ deploy_vps.md
 .claude/settings.local.json
 .claude/mcp.json
 *.lock
+.pytest_tmp/

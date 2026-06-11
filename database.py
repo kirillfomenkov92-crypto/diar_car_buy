@@ -228,6 +228,7 @@ def mark_seen(listing_id: str, source: str, price: int,
               title: str = "", listing_url: str = "", year: int = 0,
               seller_ads_count: int = 0):
     """Добавить новое объявление или обновить цену существующего."""
+    conn = None
     try:
         now = datetime.now().isoformat()
         conn = _connect()
@@ -262,13 +263,16 @@ def mark_seen(listing_id: str, source: str, price: int,
                   title, listing_url, year, seller_ads_count, listing_id, source))
 
         conn.commit()
-        conn.close()
     except Exception as e:
         logging.error(f"Ошибка mark_seen: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 
 def price_dropped(listing_id: str, source: str) -> tuple:
     """Вернуть (True, разница ₽) если цена упала с первого появления."""
+    conn = None
     try:
         conn = _connect()
         cur = conn.cursor()
@@ -277,7 +281,6 @@ def price_dropped(listing_id: str, source: str) -> tuple:
             (listing_id, source),
         )
         row = cur.fetchone()
-        conn.close()
         if row is None or not row["price_history"]:
             return (False, 0)
         history = json.loads(row["price_history"])
@@ -291,10 +294,14 @@ def price_dropped(listing_id: str, source: str) -> tuple:
     except Exception as e:
         logging.error(f"Ошибка price_dropped: {e}")
         return (False, 0)
+    finally:
+        if conn:
+            conn.close()
 
 
 def days_on_market(listing_id: str, source: str) -> int:
     """Вернуть количество дней с первого появления объявления."""
+    conn = None
     try:
         conn = _connect()
         cur = conn.cursor()
@@ -303,13 +310,15 @@ def days_on_market(listing_id: str, source: str) -> int:
             (listing_id, source),
         )
         row = cur.fetchone()
-        conn.close()
         if row is None or not row["first_seen"]:
             return 0
         return (datetime.now() - datetime.fromisoformat(row["first_seen"])).days
     except Exception as e:
         logging.error(f"Ошибка days_on_market: {e}")
         return 0
+    finally:
+        if conn:
+            conn.close()
 
 
 def was_notified(listing_id: str, source: str) -> bool:
@@ -336,6 +345,7 @@ def mark_notified(listing_id: str, source: str, dcb_score: int) -> bool:
     """Атомарно отметить объявление как уведомлённое.
     Возвращает True только если запись обновлена впервые (защита от дублей).
     """
+    conn = None
     try:
         now = datetime.now().isoformat()
         conn = _connect()
@@ -348,15 +358,18 @@ def mark_notified(listing_id: str, source: str, dcb_score: int) -> bool:
         """, (now, dcb_score, listing_id, source))
         updated = cur.rowcount > 0
         conn.commit()
-        conn.close()
         return updated
     except Exception as e:
         logging.error(f"Ошибка mark_notified: {e}")
         return False
+    finally:
+        if conn:
+            conn.close()
 
 
 def score_changed(listing_id: str, source: str, new_score: int) -> bool:
     """True если DCB Score изменился по сравнению с последним уведомлением."""
+    conn = None
     try:
         conn = _connect()
         cur = conn.cursor()
@@ -365,17 +378,20 @@ def score_changed(listing_id: str, source: str, new_score: int) -> bool:
             (listing_id, source),
         )
         row = cur.fetchone()
-        conn.close()
         if row is None or row["last_dcb_score"] is None:
             return True
         return row["last_dcb_score"] != new_score
     except Exception as e:
         logging.error(f"Ошибка score_changed: {e}")
         return True
+    finally:
+        if conn:
+            conn.close()
 
 
 def record_response_time(listing_id: str, source: str, minutes: int):
     """Сохранить время реакции на объявление и обновить рекорд за сегодня."""
+    conn = None
     try:
         conn = _connect()
         cur = conn.cursor()
@@ -383,7 +399,6 @@ def record_response_time(listing_id: str, source: str, minutes: int):
             UPDATE seen_listings SET response_time_minutes=?
             WHERE listing_id=? AND source=?
         """, (minutes, listing_id, source))
-        # Обновляем рекорд в daily_stats
         today = datetime.now().strftime("%Y-%m-%d")
         _ensure_today_row(cur, today)
         cur.execute("""
@@ -394,13 +409,16 @@ def record_response_time(listing_id: str, source: str, minutes: int):
             WHERE date=?
         """, (minutes, minutes, today))
         conn.commit()
-        conn.close()
     except Exception as e:
         logging.error(f"Ошибка record_response_time: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 
 def get_similar_from_db(model: str, days: int = 30) -> list:
     """Найти похожие объявления в БД за последние N дней (для рыночного анализа)."""
+    conn = None
     try:
         if not model:
             return []
@@ -409,7 +427,6 @@ def get_similar_from_db(model: str, days: int = 30) -> list:
         cutoff = (datetime.now() - timedelta(days=days)).isoformat()
         keywords = _model_keywords(model)
         if not keywords:
-            conn.close()
             return []
         # AND, а не OR: нужны объявления ИМЕННО этой модели, иначе средняя
         # цена «рынка» загрязняется чужими марками и недооценка врёт.
@@ -422,11 +439,13 @@ def get_similar_from_db(model: str, days: int = 30) -> list:
             params,
         )
         rows = cur.fetchall()
-        conn.close()
         return [dict(r) for r in rows]
     except Exception as e:
         logging.error(f"Ошибка get_similar_from_db: {e}")
         return []
+    finally:
+        if conn:
+            conn.close()
 
 
 # ── Функции для seller_history ─────────────────────────────────────────────

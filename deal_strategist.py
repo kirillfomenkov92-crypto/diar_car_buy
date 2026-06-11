@@ -13,10 +13,11 @@ def build_strategy(listing: dict, market: dict, seller: dict, fraud: dict) -> di
         motivation = seller.get("motivation_score", 0)
         bargain_pct = seller.get("bargain_pct", 5)
 
-        # Цены торга: открываем ниже цели, цель = цена * (1 - скидка), красная линия = 97% цены
+        # Цены торга: открываем ниже цели, цель = цена * (1 - скидка),
+        # красная линия = max(97% цены, target + 1000) — чтобы цель всегда была ≤ красной линии
         opening_offer = int(price * (1 - bargain_pct / 100 - 0.05))
         target_price = int(price * (1 - bargain_pct / 100))
-        walk_away = int(price * 0.97)  # максимум, который мы заплатим
+        walk_away = max(int(price * 0.97), target_price + 1000)
 
         # Лучшее время для звонка
         if motivation >= 70:
