@@ -4,7 +4,6 @@
 import re
 import json
 import logging
-import sqlite3
 import time
 from functools import wraps
 
@@ -13,7 +12,7 @@ from telegram.ext import ContextTypes
 
 from config import load_config, set_value, RUNTIME_CONFIG
 from database import (
-    DB_PATH,
+    DB_PATH, _connect,
     get_today_stats, get_top5_today, get_today_analyzed, get_deals_stats,
     add_deal, close_deal, get_active_arbitrage,
     get_speed_stats, get_source_stats,
@@ -459,8 +458,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/history — объявления у которых цена менялась (мотивированные продавцы)."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = _connect()
         rows = conn.execute("""
             SELECT title, listing_url, price_history, source
             FROM seen_listings
@@ -503,8 +501,7 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_calibrate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/calibrate — самокалибровка на основе реальных сделок."""
     try:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = _connect()
 
         total = conn.execute(
             "SELECT COUNT(*) FROM deals WHERE status='closed'"

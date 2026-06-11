@@ -172,6 +172,16 @@ def init_db():
             )
         """)
 
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS favorites (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    INTEGER,
+                listing_id TEXT,
+                added_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, listing_id)
+            )
+        """)
+
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_seen_notified "
             "ON seen_listings(last_notified)"
@@ -871,14 +881,6 @@ def add_favorite(user_id: int, listing_id: str) -> bool:
     """Добавить объявление в избранное. Возвращает True если добавлено, False если уже есть."""
     try:
         conn = _connect()
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS favorites (
-               id INTEGER PRIMARY KEY AUTOINCREMENT,
-               user_id INTEGER, listing_id TEXT,
-               added_at TEXT DEFAULT CURRENT_TIMESTAMP,
-               UNIQUE(user_id, listing_id))"""
-        )
-        conn.commit()
         conn.execute(
             "INSERT OR IGNORE INTO favorites(user_id, listing_id) VALUES(?,?)",
             (user_id, listing_id),

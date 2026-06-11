@@ -2,6 +2,9 @@
 config.yaml
 *.db
 agent.log
+agent.log.*
+agent_err.log
+bot_console.log
 *.bak
 __pycache__/
 *.pyc
@@ -12,3 +15,8 @@ diar_session.session
 diar_session.session-journal
 debug_*.html
 /test_*.py
+conversation-*.txt
+deploy_vps.md
+.claude/settings.local.json
+.claude/mcp.json
+*.lock

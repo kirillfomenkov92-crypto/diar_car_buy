@@ -25,6 +25,8 @@ def calculate_listing_age_minutes(published_at: str) -> int:
                 return n * 60
             elif "ден" in unit or "дн" in unit or "дня" in unit or "день" in unit:
                 return n * 1440
+        if any(w in pub_str.lower() for w in ("только что", "сейчас", "недавно")):
+            return 1
         if "вчера" in pub_str.lower():
             return 1440
 
