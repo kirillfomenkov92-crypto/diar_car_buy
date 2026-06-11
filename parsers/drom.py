@@ -220,8 +220,18 @@ def _parse_city(url: str, city: str, is_regional: bool,
                 pass
 
 
+def _find_chromium() -> str | None:
+    """Найти системный Chromium если Playwright не установил свой браузер."""
+    import shutil
+    for candidate in ("chromium-browser", "chromium", "google-chrome", "google-chrome-stable"):
+        path = shutil.which(candidate)
+        if path:
+            return path
+    return None
+
+
 def parse() -> list:
-    """Парсит Drom.ru через Playwright Firefox с прокруткой страницы."""
+    """Парсит Drom.ru через Playwright Chromium с прокруткой страницы."""
     load_config()
     try:
         from playwright.sync_api import sync_playwright
@@ -244,11 +254,21 @@ def parse() -> list:
 
     try:
         with sync_playwright() as pw:
-            # Firefox: лучше обходит антибот; на VPS кириллица не проблема
             launch_kwargs = {"headless": True}
             if proxy:
                 launch_kwargs["proxy"] = proxy
-            browser = pw.firefox.launch(**launch_kwargs)
+            # Пробуем Playwright-bundled Chromium, при неудаче — системный
+            try:
+                browser = pw.chromium.launch(**launch_kwargs)
+            except Exception:
+                sys_chromium = _find_chromium()
+                if sys_chromium:
+                    launch_kwargs["executable_path"] = sys_chromium
+                    browser = pw.chromium.launch(**launch_kwargs)
+                    logging.info(f"Drom: используем системный Chromium: {sys_chromium}")
+                else:
+                    logging.error("Drom: Playwright Chromium и системный браузер не найдены")
+                    return []
             for i, url in enumerate(urls):
                 # Все города — ближнее Подмосковье/Москва, считаем локальными
                 # (арбитраж «из далёкого региона» больше не нужен).
