@@ -82,6 +82,15 @@ def parse() -> list:
         logging.error(f"Auto.ru: статус {response.status_code}")
         return []
 
+    # Детектируем SPA-шелл: Auto.ru возвращает ~5-7KB пустой HTML когда блокирует IP
+    # (вместо ~300KB+ страницы с embedded JSON). Нет смысла парсить пустой шелл.
+    if len(response.text) < 15000 and '"saleId"' not in response.text:
+        logging.warning(
+            f"Auto.ru: получен JS-шелл ({len(response.text)}b) — IP VPS заблокирован Yandex SmartCaptcha. "
+            "Парсер Auto.ru недоступен с этого IP."
+        )
+        return []
+
     RUNTIME_CONFIG["AUTORU_EMPTY_CYCLES"] = 0
 
     results = _parse_from_json(response.text, max_price)
