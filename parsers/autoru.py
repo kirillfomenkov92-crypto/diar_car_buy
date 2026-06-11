@@ -53,8 +53,13 @@ def parse() -> list:
     headers = get_random_headers(referer="https://auto.ru/")
     url = f"https://auto.ru/moskva/cars/used/?price_to={max_price}&seller_group=PRIVATE"
 
-    from utils.proxy import curl_proxies
-    proxies = curl_proxies()
+    autoru_proxy = RUNTIME_CONFIG.get("AUTORU_PROXY")
+    if autoru_proxy:
+        proxies = {"http": autoru_proxy, "https": autoru_proxy}
+        logging.info(f"Auto.ru: используем прокси {autoru_proxy.split('@')[-1]}")
+    else:
+        from utils.proxy import curl_proxies
+        proxies = curl_proxies()
 
     time.sleep(random.uniform(3, 7))
 
