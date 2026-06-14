@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>МяуГавкин — зоомагазин</title>
+
+  <style>
+    /* ===== СБРОС И БАЗОВЫЕ СТИЛИ ===== */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --accent: #F9A03F;
+      --accent-dark: #e08a28;
+      --text: #222;
+      --text-light: #666;
+      --bg: #fff;
+      --bg-light: #f7f7f7;
+      --radius: 12px;
+      --shadow: 0 4px 16px rgba(0, 0, 0, 0.10);
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    }
+
+    body {
+      font-family: var(--font);
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.5;
+    }
+
+    a {
+      text-decoration: none;
+      color: inherit;
+    }
+
+    /* ===== ШАПКА ===== */
+    .header {
+      background: var(--bg);
+      border-bottom: 1px solid #eee;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    /* Верхняя строка шапки: лого + поиск + иконки */
+    .header-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 24px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .logo {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: var(--accent);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .logo span {
+      color: var(--text);
+    }
+
+    /* Строка поиска */
+    .search-box {
+      display: flex;
+      flex: 1;
+      max-width: 480px;
+      border: 1.5px solid #ddd;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .search-box input {
+      width: 100%;
+      padding: 8px 14px;
+      border: none;
+      outline: none;
+      font-size: 0.95rem;
+      font-family: var(--font);
+      background: transparent;
+    }
+
+    .search-box button {
+      background: var(--accent);
+      border: none;
+      padding: 0 16px;
+      cursor: pointer;
+      font-size: 1rem;
+      color: #fff;
+      transition: background 0.2s;
+    }
+
+    .search-box button:hover {
+      background: var(--accent-dark);
+    }
+
+    /* Иконки аккаунта и корзины */
+    .header-icons {
+      display: flex;
+      gap: 18px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .header-icons a {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      font-size: 0.7rem;
+      color: var(--text-light);
+      gap: 2px;
+      transition: color 0.2s;
+    }
+
+    .header-icons a:hover {
+      color: var(--accent);
+    }
+
+    .header-icons .icon {
+      font-size: 1.4rem;
+      line-height: 1;
+    }
+
+    /* ===== НАВИГАЦИЯ ===== */
+    .nav-wrap {
+      background: var(--bg);
+      border-top: 1px solid #f0f0f0;
+    }
+
+    .nav-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* Основное горизонтальное меню */
+    .nav-list {
+      display: flex;
+      list-style: none;
+      gap: 4px;
+    }
+
+    .nav-list a {
+      display: block;
+      padding: 12px 16px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: var(--text);
+      border-radius: 6px;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .nav-list a:hover {
+      background: #fff3e0;
+      color: var(--accent-dark);
+    }
+
+    /* ===== БУРГЕР-МЕНЮ (только мобилки) ===== */
+
+    /* Скрытый чекбокс — триггер бургера */
+    #burger-toggle {
+      display: none;
+    }
+
+    /* Кнопка-гамбургер */
+    .burger-btn {
+      display: none; /* скрыта на десктопе */
+      cursor: pointer;
+      flex-direction: column;
+      gap: 5px;
+      padding: 8px;
+      border-radius: 6px;
+      transition: background 0.2s;
+    }
+
+    .burger-btn:hover {
+      background: #f0f0f0;
+    }
+
+    .burger-btn span {
+      display: block;
+      width: 24px;
+      height: 2px;
+      background: var(--text);
+      border-radius: 2px;
+      transition: transform 0.3s, opacity 0.3s;
+    }
+
+    /* Анимация бургера при открытии */
+    #burger-toggle:checked ~ .nav-inner .burger-btn span:nth-child(1) {
+      transform: translateY(7px) rotate(45deg);
+    }
+
+    #burger-toggle:checked ~ .nav-inner .burger-btn span:nth-child(2) {
+      opacity: 0;
+    }
+
+    #burger-toggle:checked ~ .nav-inner .burger-btn span:nth-child(3) {
+      transform: translateY(-7px) rotate(-45deg);
+    }
+
+    /* Выпадающее мобильное меню */
+    .mobile-menu {
+      display: none; /* скрыто на десктопе */
+      list-style: none;
+      flex-direction: column;
+      background: var(--bg);
+      padding: 8px 24px 16px;
+      border-top: 1px solid #f0f0f0;
+    }
+
+    .mobile-menu a {
+      display: block;
+      padding: 12px 0;
+      font-size: 1rem;
+      font-weight: 500;
+      color: var(--text);
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .mobile-menu a:last-child {
+      border-bottom: none;
+    }
+
+    /* ===== КНОПКИ ===== */
+    .btn {
+      display: inline-block;
+      padding: 12px 28px;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: background 0.2s, transform 0.1s;
+      font-family: var(--font);
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-dark);
+    }
+
+    .btn-primary:active {
+      transform: scale(0.97);
+    }
+
+    .btn-sm {
+      padding: 8px 18px;
+      font-size: 0.85rem;
+    }
+
+    /* ===== HERO-СЕКЦИЯ ===== */
+    .hero {
+      background: linear-gradient(135deg, #fff8ef 0%, #fff3e0 60%, #ffe0b2 100%);
+      padding: 80px 24px;
+      text-align: center;
+    }
+
+    .hero-inner {
+      max-width: 680px;
+      margin: 0 auto;
+    }
+
+    .hero h1 {
+      font-size: clamp(2rem, 6vw, 3.4rem);
+      font-weight: 900;
+      color: var(--text);
+      line-height: 1.15;
+      margin-bottom: 16px;
+    }
+
+    .hero h1 .highlight {
+      color: var(--accent);
+    }
+
+    .hero p {
+      font-size: 1.1rem;
+      color: var(--text-light);
+      margin-bottom: 32px;
+    }
+
+    /* ===== СЕКЦИЯ ТОВАРОВ ===== */
+    .section {
+      padding: 56px 24px;
+    }
+
+    .section-light {
+      background: var(--bg-light);
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .section-title {
+      font-size: 1.6rem;
+      font-weight: 800;
+      margin-bottom: 32px;
+      position: relative;
+      padding-left: 16px;
+    }
+
+    /* Оранжевая полоска слева у заголовка секции */
+    .section-title::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 4px;
+      bottom: 4px;
+      width: 4px;
+      background: var(--accent);
+      border-radius: 2px;
+    }
+
+    /* Сетка карточек товаров */
+    .product-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+    }
+
+    /* Карточка товара */
+    .product-card {
+      background: var(--bg);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: box-shadow 0.25s, transform 0.25s;
+    }
+
+    .product-card:hover {
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.15);
+      transform: translateY(-4px);
+    }
+
+    /* Заглушка фото товара */
+    .product-img {
+      background: #e8e8e8;
+      height: 180px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #aaa;
+      font-size: 0.85rem;
+      font-weight: 500;
+      letter-spacing: 0.03em;
+      flex-shrink: 0;
+    }
+
+    .product-img .img-icon {
+      font-size: 2.5rem;
+      display: block;
+      margin-bottom: 6px;
+      text-align: center;
+    }
+
+    .product-body {
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      gap: 10px;
+    }
+
+    .product-name {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text);
+      flex: 1;
+    }
+
+    .product-price {
+      font-size: 1.15rem;
+      font-weight: 800;
+      color: var(--accent-dark);
+    }
+
+    /* ===== СЕКЦИЯ ПРЕИМУЩЕСТВ ===== */
+    .benefits-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+
+    .benefit-card {
+      background: var(--bg);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 32px 24px;
+      text-align: center;
+      transition: transform 0.25s;
+    }
+
+    .benefit-card:hover {
+      transform: translateY(-3px);
+    }
+
+    .benefit-icon {
+      font-size: 2.8rem;
+      margin-bottom: 14px;
+      display: block;
+    }
+
+    .benefit-title {
+      font-size: 1rem;
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: var(--text);
+    }
+
+    .benefit-desc {
+      font-size: 0.88rem;
+      color: var(--text-light);
+    }
+
+    /* ===== ПОДВАЛ ===== */
+    .footer {
+      background: #1e1e1e;
+      color: #ccc;
+      padding: 48px 24px 24px;
+    }
+
+    .footer-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 32px;
+      padding-bottom: 32px;
+      border-bottom: 1px solid #333;
+    }
+
+    .footer-col h3 {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .footer-col p, .footer-col a {
+      display: block;
+      font-size: 0.88rem;
+      color: #aaa;
+      margin-bottom: 8px;
+      transition: color 0.2s;
+    }
+
+    .footer-col a:hover {
+      color: var(--accent);
+    }
+
+    .footer-logo {
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: var(--accent);
+      margin-bottom: 10px;
+    }
+
+    .footer-bottom {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding-top: 20px;
+      text-align: center;
+      font-size: 0.8rem;
+      color: #555;
+    }
+
+    /* ===== АДАПТИВНОСТЬ ===== */
+
+    /* Планшет */
+    @media (max-width: 900px) {
+      .product-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .footer-inner {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    /* Мобилки */
+    @media (max-width: 640px) {
+
+      /* Показываем бургер-кнопку */
+      .burger-btn {
+        display: flex;
+      }
+
+      /* Скрываем десктопное меню */
+      .nav-list {
+        display: none;
+      }
+
+      /* Мобильное меню открывается через чекбокс */
+      #burger-toggle:checked ~ .mobile-menu {
+        display: flex;
+      }
+
+      /* Меняем порядок элементов в шапке */
+      .header-top {
+        padding: 12px 16px;
+        gap: 10px;
+      }
+
+      .search-box {
+        display: none; /* прячем поиск на мобилках (упрощение) */
+      }
+
+      .nav-inner {
+        padding: 0 16px;
+      }
+
+      .hero {
+        padding: 48px 16px;
+      }
+
+      .product-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .benefits-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .footer-inner {
+        grid-template-columns: 1fr;
+        gap: 24px;
+      }
+
+      .section {
+        padding: 40px 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ===== ШАПКА ===== -->
+<header class="header">
+
+  <!-- Верхняя строка: лого, поиск, иконки -->
+  <div class="header-top">
+    <div class="logo">МяуГав<span>кин</span></div>
+
+    <!-- Строка поиска -->
+    <div class="search-box">
+      <input type="text" placeholder="Ищите корма, игрушки, лежанки..." aria-label="Поиск товаров" />
+      <button aria-label="Найти">🔍</button>
+    </div>
+
+    <!-- Иконки: аккаунт и корзина -->
+    <nav class="header-icons">
+      <a href="#">
+        <span class="icon">👤</span>
+        <span>Войти</span>
+      </a>
+      <a href="#">
+        <span class="icon">🛒</span>
+        <span>Корзина</span>
+      </a>
+    </nav>
+  </div>
+
+  <!-- Навигационная строка -->
+  <!--
+    Чекбокс — скрытый триггер бургер-меню.
+    Кнопка (label) переключает его состояние.
+    CSS-селектор :checked раскрывает .mobile-menu.
+  -->
+  <div class="nav-wrap">
+    <input type="checkbox" id="burger-toggle" aria-hidden="true" />
+    <div class="nav-inner">
+      <!-- Десктопное меню -->
+      <ul class="nav-list">
+        <li><a href="#">Кошки</a></li>
+        <li><a href="#">Собаки</a></li>
+        <li><a href="#">Другие животные</a></li>
+        <li><a href="#" style="color: var(--accent);">🔥 Акции</a></li>
+        <li><a href="#">О нас</a></li>
+      </ul>
+
+      <!-- Бургер-кнопка (видна только на мобилках) -->
+      <label class="burger-btn" for="burger-toggle" aria-label="Открыть меню">
+        <span></span>
+        <span></span>
+        <span></span>
+      </label>
+    </div>
+
+    <!-- Мобильное выпадающее меню -->
+    <ul class="mobile-menu">
+      <li><a href="#">Кошки</a></li>
+      <li><a href="#">Собаки</a></li>
+      <li><a href="#">Другие животные</a></li>
+      <li><a href="#" style="color: var(--accent);">🔥 Акции</a></li>
+      <li><a href="#">О нас</a></li>
+    </ul>
+  </div>
+
+</header>
+
+<!-- ===== HERO-СЕКЦИЯ ===== -->
+<section class="hero">
+  <div class="hero-inner">
+    <h1>Пушистые<br/><span class="highlight">и не очень</span></h1>
+    <p>Всё для комфорта и радости вашего питомца</p>
+    <a href="#catalog" class="btn btn-primary">В каталог</a>
+  </div>
+</section>
+
+<!-- ===== СЕКЦИЯ: ТОВАРЫ ДЛЯ КОШЕК ===== -->
+<section class="section" id="catalog">
+  <div class="container">
+    <h2 class="section-title">Товары для кошек</h2>
+
+    <div class="product-grid">
+
+      <!-- Карточка 1 -->
+      <div class="product-card">
+        <div class="product-img">
+          <div>
+            <span class="img-icon">🐱</span>
+            Фото товара
+          </div>
+        </div>
+        <div class="product-body">
+          <div class="product-name">Корм сухой «Мурка Премиум» 2 кг</div>
+          <div class="product-price">549 ₽</div>
+          <button class="btn btn-primary btn-sm" onclick="addToCart()">Купить</button>
+        </div>
+      </div>
+
+      <!-- Карточка 2 -->
+      <div class="product-card">
+        <div class="product-img">
+          <div>
+            <span class="img-icon">🧶</span>
+            Фото товара
+          </div>
+        </div>
+        <div class="product-body">
+          <div class="product-name">Игрушка «Мышка с пером» для кошек</div>
+          <div class="product-price">129 ₽</div>
+          <button class="btn btn-primary btn-sm" onclick="addToCart()">Купить</button>
+        </div>
+      </div>
+
+      <!-- Карточка 3 -->
+      <div class="product-card">
+        <div class="product-img">
+          <div>
+            <span class="img-icon">🛏️</span>
+            Фото товара
+          </div>
+        </div>
+        <div class="product-body">
+          <div class="product-name">Лежанка «Уютный домик» 45×45 см</div>
+          <div class="product-price">890 ₽</div>
+          <button class="btn btn-primary btn-sm" onclick="addToCart()">Купить</button>
+        </div>
+      </div>
+
+      <!-- Карточка 4 -->
+      <div class="product-card">
+        <div class="product-img">
+          <div>
+            <span class="img-icon">🪮</span>
+            Фото товара
+          </div>
+        </div>
+        <div class="product-body">
+          <div class="product-name">Расчёска с вращающимися зубцами</div>
+          <div class="product-price">320 ₽</div>
+          <button class="btn btn-primary btn-sm" onclick="addToCart()">Купить</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ===== СЕКЦИЯ: ПРЕИМУЩЕСТВА ===== -->
+<section class="section section-light">
+  <div class="container">
+    <h2 class="section-title">Почему выбирают нас</h2>
+
+    <div class="benefits-grid">
+
+      <div class="benefit-card">
+        <span class="benefit-icon">🚚</span>
+        <div class="benefit-title">Бесплатная доставка от 1500 ₽</div>
+        <div class="benefit-desc">Доставляем по всей России. Курьер или постамат — вам выбирать.</div>
+      </div>
+
+      <div class="benefit-card">
+        <span class="benefit-icon">🎁</span>
+        <div class="benefit-title">Бонусная программа</div>
+        <div class="benefit-desc">Копите баллы за каждую покупку и тратьте их на скидки.</div>
+      </div>
+
+      <div class="benefit-card">
+        <span class="benefit-icon">🏪</span>
+        <div class="benefit-title">Более 5 000 товаров</div>
+        <div class="benefit-desc">Корма, лакомства, одежда, клетки, аквариумы и многое другое.</div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ===== ПОДВАЛ ===== -->
+<footer class="footer">
+  <div class="footer-inner">
+
+    <!-- Колонка 1: О магазине -->
+    <div class="footer-col">
+      <div class="footer-logo">МяуГавкин</div>
+      <p>Интернет-магазин товаров для домашних животных. Работаем с 2015 года.</p>
+    </div>
+
+    <!-- Колонка 2: Контакты -->
+    <div class="footer-col">
+      <h3>Контакты</h3>
+      <p>📞 +7 (800) 555-35-35</p>
+      <p>✉️ hello@myaugavkin.ru</p>
+      <p>🕐 Пн–Пт: 9:00–20:00</p>
+    </div>
+
+    <!-- Колонка 3: Соцсети -->
+    <div class="footer-col">
+      <h3>Мы в соцсетях</h3>
+      <a href="#">ВКонтакте</a>
+      <a href="#">Telegram-канал</a>
+      <a href="#">Одноклассники</a>
+    </div>
+
+  </div>
+
+  <!-- Нижняя строка подвала -->
+  <div class="footer-bottom">
+    © 2024 МяуГавкин. Все права защищены. Цены указаны в рублях.
+  </div>
+</footer>
+
+<!-- ===== JAVASCRIPT ===== -->
+<script>
+  /* Добавление товара в корзину — простой alert */
+  function addToCart() {
+    alert('Товар добавлен в корзину! 🛒');
+  }
+</script>
+
+</body>
+</html>
